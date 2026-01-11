@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Automation UI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+    h1 { color: #00d9ff; margin-bottom: 20px; }
+    h2 { color: #00d9ff; margin: 20px 0 10px; font-size: 1.2em; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .card { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    .card h3 { color: #00d9ff; margin-bottom: 15px; }
+    input, textarea, select { width: 100%; padding: 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #eee; margin-bottom: 10px; }
+    textarea { min-height: 150px; font-family: monospace; }
+    button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: 10px; margin-bottom: 10px; }
+    .btn-primary { background: #00d9ff; color: #1a1a2e; }
+    .btn-secondary { background: #0f3460; color: #eee; }
+    .btn-danger { background: #e94560; color: #fff; }
+    .btn-success { background: #00bf63; color: #fff; }
+    .btn-small { padding: 5px 10px; font-size: 0.85em; margin: 0; }
+    .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.85em; }
+    .status-running { background: #ffc107; color: #000; }
+    .status-completed { background: #00bf63; color: #fff; }
+    .status-error { background: #e94560; color: #fff; }
+    .status-pending { background: #6c757d; color: #fff; }
+    .status-stopped { background: #fd7e14; color: #fff; }
+    .log-box { background: #0d1b2a; padding: 15px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85em; white-space: pre-wrap; }
+    .screenshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+    .screenshot-item { background: #0f3460; border-radius: 4px; overflow: hidden; cursor: pointer; }
+    .screenshot-item img { width: 100%; display: block; }
+    .screenshot-item .label { padding: 5px; font-size: 0.8em; text-align: center; }
+    .task-list { list-style: none; }
+    .task-list li { padding: 10px; background: #0f3460; margin-bottom: 5px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+    .task-list li:hover { background: #1a3a5c; }
+    .task-list li.selected { background: #1a3a5c; border: 1px solid #00d9ff; }
+    .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 100; justify-content: center; align-items: center; }
+    .modal.active { display: flex; }
+    .modal img { max-width: 95%; max-height: 95%; }
+    .modal .close { position: absolute; top: 20px; right: 30px; font-size: 30px; cursor: pointer; color: #fff; }
+    .modal-content { background: #16213e; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%; }
+    .modal-content h3 { color: #00d9ff; margin-bottom: 20px; }
+    .info { color: #aaa; font-size: 0.9em; margin-bottom: 10px; }
+    .flex { display: flex; gap: 10px; align-items: center; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    .cookie-count { background: #00d9ff; color: #1a1a2e; padding: 2px 8px; border-radius: 10px; font-size: 0.85em; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #0f3460; padding-bottom: 10px; }
+    .tab { padding: 10px 20px; background: #0f3460; border: none; color: #aaa; cursor: pointer; border-radius: 4px 4px 0 0; font-weight: bold; }
+    .tab.active { background: #00d9ff; color: #1a1a2e; }
+    .tab:hover:not(.active) { background: #1a3a5c; color: #eee; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Task table */
+    .task-table { width: 100%; border-collapse: collapse; }
+    .task-table th, .task-table td { padding: 10px; text-align: left; border-bottom: 1px solid #0f3460; }
+    .task-table th { color: #00d9ff; background: #0d1b2a; }
+    .task-table tr:hover { background: #1a3a5c; cursor: pointer; }
+    .task-table tr.selected { background: #1a3a5c; }
+    .checkbox-col { width: 40px; }
+
+    /* Pagination */
+    .pagination { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 15px; }
+    .pagination button { margin: 0; }
+    .pagination span { color: #aaa; }
+
+    /* Two column layout for task details */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🌐 Browser Automation UI</h1>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('tasks')">📋 Tasks</button>
+      <button class="tab" onclick="switchTab('cookies')">🍪 Cookies</button>
+      <button class="tab" onclick="switchTab('proxy')">🌐 Proxy</button>
+      <button class="tab" onclick="switchTab('browser')">🖥️ Browser Pool</button>
+      <button class="tab" onclick="switchTab('browse')">🔍 Quick Browse</button>
+      <button class="tab" onclick="switchTab('taskTypes')">⚙️ Task Types</button>
+    </div>
+
+    <!-- Tasks Tab -->
+    <div id="tab-tasks" class="tab-content active">
+      <div class="card">
+        <div class="flex-between" style="margin-bottom: 15px;">
+          <h3 style="margin: 0;">Task List</h3>
+          <div>
+            <button class="btn-primary" onclick="openCreateTaskModal()">+ Create Task</button>
+            <button class="btn-secondary" onclick="refreshTasks()">Refresh</button>
+            <button class="btn-danger" onclick="deleteSelectedTasks()" id="deleteSelectedBtn" style="display: none;">Delete Selected</button>
+          </div>
+        </div>
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th class="checkbox-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
+              <th>Task ID</th>
+              <th>Type</th>
+              <th>PSM</th>
+              <th>Env</th>
+              <th>IDL Branch</th>
+              <th>Status</th>
+              <th>Stage</th>
+              <th>Started</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="taskTableBody"></tbody>
+        </table>
+        <div id="stopTaskSection" style="display: none; margin-top: 15px; padding: 15px; background: #0d1b2a; border-radius: 4px;">
+          <span id="runningTaskInfo" style="color: #ffc107;"></span>
+          <button class="btn-danger" onclick="stopRunningTask()" style="margin-left: 10px;">Stop Running Task</button>
+        </div>
+      </div>
+
+      <div class="card" id="taskDetails" style="display: none;">
+        <h3>📊 Task Details</h3>
+        <div class="two-col">
+          <div>
+            <div id="taskInfo"></div>
+            <h4 style="margin-top: 15px; color: #00d9ff;">Logs</h4>
+            <div id="taskLogs" class="log-box"></div>
+          </div>
+          <div>
+            <h4 style="color: #00d9ff;">Screenshots</h4>
+            <div id="taskScreenshots" class="screenshot-grid"></div>
+            <div id="screenshotPagination" class="pagination" style="display: none;">
+              <button class="btn-secondary btn-small" onclick="prevScreenshotPage()">← Prev</button>
+              <span id="screenshotPageInfo">Page 1 of 1</span>
+              <button class="btn-secondary btn-small" onclick="nextScreenshotPage()">Next →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cookies Tab -->
+    <div id="tab-cookies" class="tab-content">
+      <div class="card">
+        <h3>🍪 Cookie Management</h3>
+        <div class="flex" style="margin-bottom: 15px;">
+          <span>Loaded cookies: <span id="cookieCount" class="cookie-count">0</span></span>
+          <button class="btn-secondary" onclick="loadCookies()">Refresh Count</button>
+        </div>
+        <textarea id="cookieInput" placeholder="Paste cookies JSON here..."></textarea>
+        <div style="margin-bottom: 10px;">
+          <label style="display: flex; align-items: center; gap: 8px; color: #aaa;">
+            <input type="checkbox" id="mergeCookies" checked> Merge with existing cookies (update by name+domain)
+          </label>
+        </div>
+        <div>
+          <button class="btn-primary" onclick="uploadCookies()">Upload Cookies</button>
+          <button class="btn-secondary" onclick="viewCookies()">View Current Cookies</button>
+          <button class="btn-danger" onclick="clearCookies()">Clear All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proxy Tab -->
+    <div id="tab-proxy" class="tab-content">
+      <div class="card">
+        <h3>🌐 Proxy Configuration</h3>
+        <p class="info">Configure browser proxy settings for network routing.</p>
+
+        <div style="margin-top: 15px;">
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Proxy Status</h4>
+          <div id="proxyStatus" style="background: #0d1b2a; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+            Loading...
+          </div>
+        </div>
+
+        <div style="margin-top: 15px; background: #0d1b2a; padding: 15px; border-radius: 4px;">
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="proxyEnabled" onchange="toggleProxy()" style="width: 20px; height: 20px;">
+            <span style="font-size: 1.1em;"><strong>Enable Browser Proxy</strong></span>
+          </label>
+          <p class="info" style="margin-top: 8px; margin-left: 30px;">When enabled, browser uses local proxy (port 8888) which can route to Mac proxy.</p>
+        </div>
+
+        <div style="margin-top: 15px;">
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Mac Proxy</h4>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span>Port:</span>
+            <input type="number" id="macProxyPort" value="9999" style="width: 100px;">
+            <button class="btn-secondary btn-small" onclick="testMacProxy()">Test Connection</button>
+            <span id="macProxyTestResult"></span>
+          </div>
+        </div>
+
+        <div style="margin-top: 15px;">
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Blocked Domains</h4>
+          <p class="info">Requests to these domains will be skipped (return 502) to prevent hanging.</p>
+          <textarea id="blockedDomains" placeholder="office-cdn.bytedance.net&#10;larksuitecdn.com&#10;feishu.cn" style="min-height: 100px;"></textarea>
+        </div>
+
+        <div style="margin-top: 15px;">
+          <button class="btn-primary" onclick="saveProxyConfig()">Save Configuration</button>
+          <button class="btn-secondary" onclick="loadProxyConfig()">Reload</button>
+        </div>
+
+        <div style="margin-top: 20px; background: #0f3460; padding: 15px; border-radius: 4px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h4 style="color: #ffc107; margin: 0;">Mac Proxy Setup Instructions</h4>
+            <div>
+              <button class="btn-secondary btn-small" onclick="copyProxyScript()">Copy Script</button>
+              <button class="btn-primary btn-small" onclick="downloadProxyScript()">Download .js</button>
+            </div>
+          </div>
+
+          <div style="margin-top: 15px;">
+            <h5 style="color: #00d9ff; margin-bottom: 8px;">Step 1: Save proxy script on your Mac</h5>
+            <p class="info">Copy or download the script below and save as <code>mac_cdn_proxy.js</code> on your Mac:</p>
+            <textarea id="proxyScriptContent" readonly style="min-height: 200px; font-family: monospace; font-size: 0.85em; background: #0d1b2a; margin-top: 8px;"></textarea>
+          </div>
+
+          <div style="margin-top: 15px;">
+            <h5 style="color: #00d9ff; margin-bottom: 8px;">Step 2: Start the proxy server on Mac</h5>
+            <p class="info">Open Terminal on your Mac and run:</p>
+            <pre style="background: #0d1b2a; padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 8px;"><code>cd ~/
+node mac_cdn_proxy.js</code></pre>
+            <p class="info" style="margin-top: 5px;">You should see: "CDN Proxy Server Started on port 9999"</p>
+          </div>
+
+          <div style="margin-top: 15px;">
+            <h5 style="color: #00d9ff; margin-bottom: 8px;">Step 3: Create SSH tunnel (new Terminal tab)</h5>
+            <p class="info">Open another Terminal tab and run:</p>
+            <pre style="background: #0d1b2a; padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 8px;"><code>ssh -R 9999:localhost:9999 yi.cheng1@devbox</code></pre>
+            <p class="info" style="margin-top: 5px;">This forwards devbox port 9999 to your Mac's port 9999</p>
+          </div>
+
+          <div style="margin-top: 15px;">
+            <h5 style="color: #00d9ff; margin-bottom: 8px;">Step 4: Verify connection</h5>
+            <p class="info">Click the "Test Connection" button above. If it shows "Connected!", you're ready!</p>
+          </div>
+
+          <div style="margin-top: 15px;">
+            <h5 style="color: #00d9ff; margin-bottom: 8px;">Step 5: Enable browser proxy</h5>
+            <p class="info">Check the "Enable Browser Proxy" checkbox above, then restart your task.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Browser Pool Tab -->
+    <div id="tab-browser" class="tab-content">
+      <div class="card">
+        <div class="flex-between" style="margin-bottom: 15px;">
+          <h3 style="margin: 0;">🖥️ Browser Pool</h3>
+          <div>
+            <button class="btn-secondary" onclick="loadBrowserStatus()">Refresh</button>
+            <button class="btn-danger" onclick="closeBrowser()">Close Browser</button>
+          </div>
+        </div>
+
+        <div id="browserPoolStatus" style="background: #0d1b2a; padding: 20px; border-radius: 4px; margin-bottom: 20px;">
+          Loading...
+        </div>
+
+        <div id="browserPoolDetails" style="display: none;">
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Visited Domains</h4>
+          <div id="browserDomains" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;"></div>
+
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Recent Tasks</h4>
+          <div id="browserTasks" style="background: #0d1b2a; padding: 15px; border-radius: 4px; margin-bottom: 20px;"></div>
+
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Recent URLs</h4>
+          <div id="browserUrls" class="log-box" style="max-height: 250px;"></div>
+        </div>
+
+        <div style="margin-top: 20px; background: #0f3460; padding: 15px; border-radius: 4px;">
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">Browser Pool Info</h4>
+          <ul style="color: #aaa; font-size: 0.9em; margin-left: 20px;">
+            <li>Browsers are cached and reused between tasks for faster execution</li>
+            <li>Idle browsers are automatically closed after 5 minutes</li>
+            <li>URL history tracks the last 50 visited pages</li>
+            <li>Click "Close Browser" to force close and start fresh</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Browse Tab -->
+    <div id="tab-browse" class="tab-content">
+      <div class="card">
+        <h3>🔍 Quick Browse</h3>
+        <p class="info">Test browser automation by visiting any URL. This will open the URL in the headless browser and take a screenshot.</p>
+        <input type="text" id="browseUrl" placeholder="Enter URL to browse (e.g., https://example.com)">
+        <button class="btn-primary" onclick="browseUrl()">Browse</button>
+        <div id="browseResult" style="margin-top: 15px;"></div>
+      </div>
+    </div>
+
+    <!-- Task Types Tab -->
+    <div id="tab-taskTypes" class="tab-content">
+      <div class="card">
+        <h3>⚙️ Available Task Types</h3>
+        <p class="info">These are the automation task types supported by the system.</p>
+        <div style="margin-top: 20px;">
+          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+            <h4 style="color: #00d9ff; margin-bottom: 10px;">🚀 Janus Mini Update</h4>
+            <p style="color: #aaa; font-size: 0.9em;">Updates IDL branch configuration, clicks Deployment → Release.</p>
+            <ul style="color: #aaa; font-size: 0.9em; margin-left: 20px; margin-top: 10px;">
+              <li>Navigate to Janus IDL config page</li>
+              <li>Select lane and verify settings</li>
+              <li>Choose version from IDL branch</li>
+              <li>Click Deployment → Release</li>
+            </ul>
+            <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> PSM, Environment, IDL Branch</p>
+            <p style="color: #aaa; font-size: 0.9em;"><strong>Optional:</strong> API Group ID (e.g., 340871), IDL Version</p>
+          </div>
+
+          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 10px;">
+            <h4 style="color: #00d9ff; margin-bottom: 10px;">📋 Execute Workorder</h4>
+            <p style="color: #aaa; font-size: 0.9em;">Executes a pending workorder (clicks "开始发布" and "确认").</p>
+            <ul style="color: #aaa; font-size: 0.9em; margin-left: 20px; margin-top: 10px;">
+              <li>Navigate to release history page</li>
+              <li>Find first row with "Waiting" status</li>
+              <li>Click row to open workorder details</li>
+              <li>Wait for bits iframe to load</li>
+              <li>Click "开始发布" (Start publish)</li>
+              <li>Wait for "完成确认" stage, click "确认"</li>
+            </ul>
+            <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> PSM, Environment (Lane), API Group ID</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Modal -->
+  <div class="modal" id="imageModal" onclick="this.classList.remove('active')">
+    <span class="close">&times;</span>
+    <img id="modalImage" src="">
+  </div>
+
+  <!-- Create Task Modal -->
+  <div class="modal" id="createTaskModal">
+    <div class="modal-content">
+      <h3>Create New Task</h3>
+
+      <!-- JSON Import Section -->
+      <div style="background: #0d1b2a; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <label style="color: #00d9ff; font-size: 0.9em; margin: 0;">Import from JSON (paste and click Import)</label>
+          <button class="btn-secondary btn-small" onclick="importTaskJson()">Import</button>
+        </div>
+        <textarea id="newTaskJson" placeholder='{"type": "janus", "psm": "...", "env": "...", "idl_branch": "..."}' style="min-height: 60px; font-family: monospace; font-size: 0.85em;"></textarea>
+      </div>
+
+      <label style="color: #aaa; font-size: 0.9em;">Task Type</label>
+      <select id="newTaskType" onchange="toggleTaskTypeFields()">
+        <option value="janus">Janus Mini Update</option>
+        <option value="workorder">Execute Workorder</option>
+      </select>
+      <label style="color: #aaa; font-size: 0.9em;">PSM</label>
+      <input type="text" id="newPsm" placeholder="e.g., oec.reverse.strategy">
+      <label style="color: #aaa; font-size: 0.9em;">Environment (Lane)</label>
+      <input type="text" id="newEnv" placeholder="e.g., boe_feat_system_deleete">
+      <div id="janusOnlyFields">
+        <label style="color: #aaa; font-size: 0.9em;">IDL Branch (required for Janus Update)</label>
+        <input type="text" id="newIdlBranch" placeholder="e.g., feat/sell_rule">
+        <label style="color: #aaa; font-size: 0.9em;">API Group ID (optional shortcut)</label>
+        <input type="text" id="newApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+        <label style="color: #aaa; font-size: 0.9em;">IDL Version (optional, for version downgrade)</label>
+        <input type="text" id="newIdlVersion" placeholder="e.g., specific version number">
+      </div>
+      <div id="workorderOnlyFields" style="display: none;">
+        <label style="color: #aaa; font-size: 0.9em;">API Group ID (required)</label>
+        <input type="text" id="newWorkorderApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn-success" onclick="createTask()">Create Task</button>
+        <button class="btn-secondary" onclick="closeCreateTaskModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Task Modal -->
+  <div class="modal" id="editTaskModal">
+    <div class="modal-content">
+      <h3>Edit Task <span id="editTaskIdDisplay" style="color: #888; font-size: 0.7em;"></span></h3>
+      <input type="hidden" id="editTaskId">
+      <label style="color: #aaa; font-size: 0.9em;">Task Type</label>
+      <input type="text" id="editTaskType" readonly style="background: #0d1b2a; color: #888; cursor: not-allowed;">
+      <label style="color: #aaa; font-size: 0.9em;">PSM</label>
+      <input type="text" id="editPsm" placeholder="e.g., oec.reverse.strategy">
+      <label style="color: #aaa; font-size: 0.9em;">Environment</label>
+      <input type="text" id="editEnv" placeholder="e.g., boe_feat_system_deleete">
+      <div id="editJanusFields">
+        <label style="color: #aaa; font-size: 0.9em;">IDL Branch</label>
+        <input type="text" id="editIdlBranch" placeholder="e.g., feat/sell_rule">
+        <label style="color: #aaa; font-size: 0.9em;">IDL Version (optional)</label>
+        <input type="text" id="editIdlVersion" placeholder="e.g., specific version number">
+      </div>
+      <label style="color: #aaa; font-size: 0.9em;">API Group ID</label>
+      <input type="text" id="editApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+      <div style="display: flex; gap: 10px;">
+        <button class="btn-primary" onclick="saveTaskEdit()">Save</button>
+        <button class="btn-success" onclick="saveAndRestartTask()">Save & Restart</button>
+        <button class="btn-secondary" onclick="closeEditTaskModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+    let currentTaskId = null;
+
+    // Helper function to convert URLs in text to clickable links
+    function linkifyUrls(text) {
+      // Escape HTML first to prevent XSS
+      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Match URLs
+      const urlPattern = /(https?:\/\/[^\s<>"']+)/g;
+      return escaped.replace(urlPattern, '<a href="$1" target="_blank" style="color: #00d9ff; text-decoration: underline;">$1</a>');
+    }
+    let pollInterval = null;
+    let selectedTasks = new Set();
+    let allScreenshots = [];
+    let screenshotPage = 0;
+    const SCREENSHOTS_PER_PAGE = 8;
+
+    // Tab switching
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+      document.getElementById('tab-' + tabName).classList.add('active');
+    }
+
+    // Cookies
+    async function loadCookies() {
+      const res = await fetch(API + '/api/cookies');
+      const data = await res.json();
+      document.getElementById('cookieCount').textContent = data.count;
+    }
+
+    async function uploadCookies() {
+      const input = document.getElementById('cookieInput').value;
+      const merge = document.getElementById('mergeCookies').checked;
+      try {
+        const cookies = JSON.parse(input);
+        const res = await fetch(API + '/api/cookies?merge=' + merge, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cookies)
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Cookies uploaded: ' + data.count + (data.merged ? ' (merged)' : ' (replaced)'));
+          loadCookies();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (e) {
+        alert('Invalid JSON: ' + e.message);
+      }
+    }
+
+    async function viewCookies() {
+      const res = await fetch(API + '/api/cookies');
+      const data = await res.json();
+      document.getElementById('cookieInput').value = JSON.stringify(data.cookies, null, 2);
+    }
+
+    async function clearCookies() {
+      if (!confirm('Are you sure you want to clear all cookies?')) return;
+      const res = await fetch(API + '/api/cookies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([])
+      });
+      const data = await res.json();
+      alert('Cookies cleared');
+      loadCookies();
+    }
+
+    // Task Modal
+    function openCreateTaskModal() {
+      document.getElementById('createTaskModal').classList.add('active');
+    }
+
+    function closeCreateTaskModal() {
+      document.getElementById('createTaskModal').classList.remove('active');
+    }
+
+    function toggleTaskTypeFields() {
+      const type = document.getElementById('newTaskType').value;
+      const janusFields = document.getElementById('janusOnlyFields');
+      const workorderFields = document.getElementById('workorderOnlyFields');
+      if (type === 'workorder') {
+        janusFields.style.display = 'none';
+        workorderFields.style.display = 'block';
+      } else {
+        janusFields.style.display = 'block';
+        workorderFields.style.display = 'none';
+      }
+    }
+
+    // Import task from JSON
+    function importTaskJson() {
+      const jsonText = document.getElementById('newTaskJson').value.trim();
+      if (!jsonText) {
+        alert('Please paste JSON in the text area');
+        return;
+      }
+      try {
+        const config = JSON.parse(jsonText);
+
+        // Set task type
+        if (config.type === 'workorder' || config.type === 'janus_workorder_execute') {
+          document.getElementById('newTaskType').value = 'workorder';
+        } else {
+          document.getElementById('newTaskType').value = 'janus';
+        }
+        toggleTaskTypeFields();
+
+        // Set common fields
+        if (config.psm) document.getElementById('newPsm').value = config.psm;
+        if (config.env) document.getElementById('newEnv').value = config.env;
+
+        // Set Janus-specific fields
+        if (config.idl_branch) document.getElementById('newIdlBranch').value = config.idl_branch;
+        if (config.idl_version) document.getElementById('newIdlVersion').value = config.idl_version;
+        if (config.api_group_id) {
+          document.getElementById('newApiGroupId').value = config.api_group_id;
+          document.getElementById('newWorkorderApiGroupId').value = config.api_group_id;
+        }
+
+        alert('JSON imported! Review the fields and click Create Task.');
+      } catch (e) {
+        alert('Invalid JSON: ' + e.message);
+      }
+    }
+
+    async function createTask() {
+      const type = document.getElementById('newTaskType').value;
+      const psm = document.getElementById('newPsm').value;
+      const env = document.getElementById('newEnv').value;
+
+      if (!psm || !env) {
+        alert('PSM and Environment are required');
+        return;
+      }
+
+      let endpoint, body;
+
+      if (type === 'workorder') {
+        // Execute Workorder task - needs psm, env, and api_group_id
+        const api_group_id = document.getElementById('newWorkorderApiGroupId').value;
+        if (!api_group_id) {
+          alert('API Group ID is required for Execute Workorder');
+          return;
+        }
+        endpoint = '/api/tasks/janus-workorder';
+        body = { psm, env, api_group_id };
+      } else {
+        // Janus Mini Update task
+        const idl_branch = document.getElementById('newIdlBranch').value;
+        const api_group_id = document.getElementById('newApiGroupId').value;
+        const idl_version = document.getElementById('newIdlVersion').value;
+
+        if (!idl_branch) {
+          alert('IDL Branch is required for Janus Update');
+          return;
+        }
+
+        endpoint = '/api/tasks/janus';
+        body = { psm, env, idl_branch };
+        if (api_group_id) body.api_group_id = api_group_id;
+        if (idl_version) body.idl_version = idl_version;
+      }
+
+      const res = await fetch(API + endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      alert('Task started: ' + data.taskId);
+      closeCreateTaskModal();
+      refreshTasks();
+      selectTask(data.taskId);
+    }
+
+    let runningTaskId = null;
+
+    // Edit Task Modal
+    async function openEditTaskModal(taskId) {
+      const res = await fetch(API + '/api/tasks/' + taskId);
+      const task = await res.json();
+
+      document.getElementById('editTaskId').value = taskId;
+      document.getElementById('editTaskIdDisplay').textContent = '(' + taskId + ')';
+      document.getElementById('editTaskType').value = task.type || 'janus';
+      document.getElementById('editPsm').value = task.psm || '';
+      document.getElementById('editEnv').value = task.env || '';
+      document.getElementById('editIdlBranch').value = task.idl_branch || '';
+      document.getElementById('editIdlVersion').value = task.idl_version || '';
+      document.getElementById('editApiGroupId').value = task.api_group_id || '';
+
+      // Show/hide Janus-only fields based on task type
+      const janusFields = document.getElementById('editJanusFields');
+      if (task.type === 'janus_workorder_execute') {
+        janusFields.style.display = 'none';
+      } else {
+        janusFields.style.display = 'block';
+      }
+
+      document.getElementById('editTaskModal').classList.add('active');
+    }
+
+    function closeEditTaskModal() {
+      document.getElementById('editTaskModal').classList.remove('active');
+    }
+
+    async function saveTaskEdit() {
+      const taskId = document.getElementById('editTaskId').value;
+      const updates = {
+        psm: document.getElementById('editPsm').value,
+        env: document.getElementById('editEnv').value,
+        idl_branch: document.getElementById('editIdlBranch').value,
+        idl_version: document.getElementById('editIdlVersion').value || null,
+        api_group_id: document.getElementById('editApiGroupId').value || null
+      };
+
+      try {
+        const res = await fetch(API + '/api/tasks/' + taskId, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Task updated');
+          closeEditTaskModal();
+          refreshTasks();
+          if (currentTaskId === taskId) {
+            updateTaskDetails();
+          }
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Error updating task: ' + e.message);
+      }
+    }
+
+    async function saveAndRestartTask() {
+      const taskId = document.getElementById('editTaskId').value;
+      const updates = {
+        psm: document.getElementById('editPsm').value,
+        env: document.getElementById('editEnv').value,
+        idl_branch: document.getElementById('editIdlBranch').value,
+        idl_version: document.getElementById('editIdlVersion').value || null,
+        api_group_id: document.getElementById('editApiGroupId').value || null
+      };
+
+      try {
+        const res = await fetch(API + '/api/tasks/' + taskId + '/restart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+        const data = await res.json();
+        if (data.status === 'restarted') {
+          alert('Task updated and restarted');
+          closeEditTaskModal();
+          refreshTasks();
+          selectTask(taskId);
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Error restarting task: ' + e.message);
+      }
+    }
+
+    // Tasks
+    async function refreshTasks() {
+      const res = await fetch(API + '/api/tasks');
+      const tasks = await res.json();
+      const tbody = document.getElementById('taskTableBody');
+
+      // Check for running task
+      const runningTask = tasks.find(t => t.status === 'running');
+      if (runningTask) {
+        runningTaskId = runningTask.id;
+        document.getElementById('stopTaskSection').style.display = 'block';
+        document.getElementById('runningTaskInfo').textContent = `Task ${runningTask.id} is running...`;
+      } else {
+        runningTaskId = null;
+        document.getElementById('stopTaskSection').style.display = 'none';
+      }
+
+      tbody.innerHTML = tasks.map(t => `
+        <tr onclick="selectTask('${t.id}')" class="${currentTaskId === t.id ? 'selected' : ''}">
+          <td class="checkbox-col" onclick="event.stopPropagation()">
+            <input type="checkbox" ${selectedTasks.has(t.id) ? 'checked' : ''} onchange="toggleTaskSelection('${t.id}', this.checked)">
+          </td>
+          <td style="font-size: 0.8em; color: #aaa;">${t.id}</td>
+          <td>${t.type}</td>
+          <td>${t.psm || '-'}</td>
+          <td>${t.env || '-'}</td>
+          <td>${t.idl_branch || '-'}</td>
+          <td><span class="status status-${t.status}">${t.status}</span></td>
+          <td style="color: #00d9ff; font-size: 0.9em;">${t.stage || '-'}</td>
+          <td>${t.startTime ? new Date(t.startTime).toLocaleString() : '-'}</td>
+          <td onclick="event.stopPropagation()">
+            ${t.status === 'running' ?
+              `<button class="btn-danger btn-small" onclick="stopTask('${t.id}')">Stop</button>` :
+              `<button class="btn-secondary btn-small" onclick="openEditTaskModal('${t.id}')" style="margin-right: 5px;">Edit</button>
+               <button class="btn-success btn-small" onclick="restartTask('${t.id}')" style="margin-right: 5px;">Restart</button>
+               <button class="btn-danger btn-small" onclick="deleteTask('${t.id}')">Delete</button>`
+            }
+          </td>
+        </tr>
+      `).join('');
+
+      updateDeleteSelectedButton();
+    }
+
+    async function stopTask(taskId) {
+      if (!confirm('Are you sure you want to stop this task?')) return;
+      try {
+        const res = await fetch(API + '/api/tasks/' + taskId + '/stop', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          alert('Task stopped');
+          refreshTasks();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (e) {
+        alert('Error stopping task: ' + e.message);
+      }
+    }
+
+    async function restartTask(taskId) {
+      if (!confirm('Restart this task from the beginning?')) return;
+      try {
+        const res = await fetch(API + '/api/tasks/' + taskId + '/restart', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'restarted') {
+          alert('Task restarted: ' + data.taskId);
+          refreshTasks();
+          selectTask(taskId);
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Error restarting task: ' + e.message);
+      }
+    }
+
+    async function stopRunningTask() {
+      if (runningTaskId) {
+        await stopTask(runningTaskId);
+      }
+    }
+
+    function toggleTaskSelection(taskId, checked) {
+      if (checked) {
+        selectedTasks.add(taskId);
+      } else {
+        selectedTasks.delete(taskId);
+      }
+      updateDeleteSelectedButton();
+    }
+
+    function toggleSelectAll() {
+      const checked = document.getElementById('selectAll').checked;
+      const checkboxes = document.querySelectorAll('#taskTableBody input[type="checkbox"]');
+      checkboxes.forEach(cb => {
+        cb.checked = checked;
+        const taskId = cb.closest('tr').querySelector('td:nth-child(2)').textContent;
+      });
+      if (checked) {
+        document.querySelectorAll('#taskTableBody tr').forEach(tr => {
+          const checkbox = tr.querySelector('input[type="checkbox"]');
+          if (checkbox) {
+            const onclick = tr.getAttribute('onclick');
+            const match = onclick.match(/selectTask\('([^']+)'\)/);
+            if (match) selectedTasks.add(match[1]);
+          }
+        });
+      } else {
+        selectedTasks.clear();
+      }
+      updateDeleteSelectedButton();
+    }
+
+    function updateDeleteSelectedButton() {
+      const btn = document.getElementById('deleteSelectedBtn');
+      btn.style.display = selectedTasks.size > 0 ? 'inline-block' : 'none';
+      btn.textContent = `Delete Selected (${selectedTasks.size})`;
+    }
+
+    async function deleteTask(taskId) {
+      if (!confirm('Are you sure you want to delete this task?')) return;
+      await fetch(API + '/api/tasks/' + taskId, { method: 'DELETE' });
+      if (currentTaskId === taskId) {
+        currentTaskId = null;
+        document.getElementById('taskDetails').style.display = 'none';
+      }
+      selectedTasks.delete(taskId);
+      refreshTasks();
+    }
+
+    async function deleteSelectedTasks() {
+      if (!confirm(`Are you sure you want to delete ${selectedTasks.size} tasks?`)) return;
+      for (const taskId of selectedTasks) {
+        await fetch(API + '/api/tasks/' + taskId, { method: 'DELETE' });
+        if (currentTaskId === taskId) {
+          currentTaskId = null;
+          document.getElementById('taskDetails').style.display = 'none';
+        }
+      }
+      selectedTasks.clear();
+      refreshTasks();
+    }
+
+    async function selectTask(taskId) {
+      currentTaskId = taskId;
+      document.getElementById('taskDetails').style.display = 'block';
+      screenshotPage = 0;
+      await updateTaskDetails();
+      refreshTasks();
+
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(async () => {
+        const res = await fetch(API + '/api/tasks/' + taskId);
+        const task = await res.json();
+        if (task.status !== 'running') {
+          clearInterval(pollInterval);
+        }
+        await updateTaskDetails();
+      }, 2000);
+    }
+
+    async function updateTaskDetails() {
+      if (!currentTaskId) return;
+
+      const res = await fetch(API + '/api/tasks/' + currentTaskId);
+      const task = await res.json();
+
+      // Build task config JSON for copy/create
+      const taskConfig = {
+        type: task.type === 'janus_mini_update' ? 'janus' : 'workorder',
+        psm: task.psm,
+        env: task.env
+      };
+      if (task.type === 'janus_mini_update') {
+        taskConfig.idl_branch = task.idl_branch;
+        if (task.idl_version) taskConfig.idl_version = task.idl_version;
+        if (task.api_group_id) taskConfig.api_group_id = task.api_group_id;
+      } else {
+        taskConfig.api_group_id = task.api_group_id;
+      }
+
+      document.getElementById('taskInfo').innerHTML = `
+        <p><strong>ID:</strong> ${task.id}</p>
+        <p><strong>Type:</strong> ${task.type}</p>
+        <p><strong>PSM:</strong> ${task.psm || '-'}</p>
+        <p><strong>Env:</strong> ${task.env || '-'}</p>
+        <p><strong>IDL Branch:</strong> ${task.idl_branch || '-'}</p>
+        <p><strong>IDL Version:</strong> ${task.idl_version || '-'}</p>
+        <p><strong>API Group ID:</strong> ${task.api_group_id || '-'}</p>
+        <p><strong>Status:</strong> <span class="status status-${task.status}">${task.status}</span></p>
+        <p><strong>Stage:</strong> <span style="color: #00d9ff;">${task.stage || '-'}</span></p>
+        <p><strong>Started:</strong> ${task.startTime ? new Date(task.startTime).toLocaleString() : '-'}</p>
+        ${task.endTime ? '<p><strong>Ended:</strong> ' + new Date(task.endTime).toLocaleString() + '</p>' : ''}
+        ${task.error ? '<p style="color: #e94560;"><strong>Error:</strong> ' + task.error + '</p>' : ''}
+        ${task.result ? '<p style="color: #00bf63;"><strong>Result:</strong> ' + task.result + '</p>' : ''}
+        <div style="margin-top: 15px; background: #0d1b2a; padding: 10px; border-radius: 4px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <strong style="color: #00d9ff;">Task Config (JSON)</strong>
+            <button class="btn-secondary btn-small" onclick="copyTaskJson()">Copy JSON</button>
+          </div>
+          <pre id="taskJsonConfig" style="margin: 0; font-size: 0.85em; white-space: pre-wrap; color: #aaa;">${JSON.stringify(taskConfig, null, 2)}</pre>
+        </div>
+      `;
+
+      const logsEl = document.getElementById('taskLogs');
+      logsEl.innerHTML = linkifyUrls((task.logs || []).join('\n'));
+      logsEl.scrollTop = logsEl.scrollHeight; // Auto-scroll to bottom
+
+      // Fetch screenshots
+      const ssRes = await fetch(API + '/api/tasks/' + currentTaskId + '/screenshots');
+      allScreenshots = await ssRes.json();
+      renderScreenshots();
+    }
+
+    function renderScreenshots() {
+      const totalPages = Math.ceil(allScreenshots.length / SCREENSHOTS_PER_PAGE);
+      const start = screenshotPage * SCREENSHOTS_PER_PAGE;
+      const end = start + SCREENSHOTS_PER_PAGE;
+      const pageScreenshots = allScreenshots.slice(start, end);
+
+      document.getElementById('taskScreenshots').innerHTML = pageScreenshots.map((ss, i) => `
+        <div class="screenshot-item" onclick="showImage('/api/tasks/${currentTaskId}/screenshots/${start + i}')">
+          <img src="/api/tasks/${currentTaskId}/screenshots/${start + i}" loading="lazy">
+          <div class="label">${ss.label}</div>
+        </div>
+      `).join('');
+
+      const pagination = document.getElementById('screenshotPagination');
+      if (allScreenshots.length > SCREENSHOTS_PER_PAGE) {
+        pagination.style.display = 'flex';
+        document.getElementById('screenshotPageInfo').textContent = `Page ${screenshotPage + 1} of ${totalPages}`;
+      } else {
+        pagination.style.display = 'none';
+      }
+    }
+
+    function prevScreenshotPage() {
+      if (screenshotPage > 0) {
+        screenshotPage--;
+        renderScreenshots();
+      }
+    }
+
+    function nextScreenshotPage() {
+      const totalPages = Math.ceil(allScreenshots.length / SCREENSHOTS_PER_PAGE);
+      if (screenshotPage < totalPages - 1) {
+        screenshotPage++;
+        renderScreenshots();
+      }
+    }
+
+    function showImage(src) {
+      document.getElementById('modalImage').src = src;
+      document.getElementById('imageModal').classList.add('active');
+    }
+
+    // Quick Browse
+    async function browseUrl() {
+      const url = document.getElementById('browseUrl').value;
+      if (!url) {
+        alert('Please enter a URL');
+        return;
+      }
+
+      document.getElementById('browseResult').innerHTML = '<p style="color: #ffc107;">Loading... This may take a few seconds.</p>';
+
+      try {
+        const res = await fetch(API + '/api/browse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          document.getElementById('browseResult').innerHTML = '<p style="color: #e94560;">Error: ' + data.error + '</p>';
+        } else {
+          document.getElementById('browseResult').innerHTML = `
+            <p><strong>Title:</strong> ${data.title || 'N/A'}</p>
+            <p><strong>Final URL:</strong> ${data.url}</p>
+            <img src="data:image/png;base64,${data.screenshot}" style="max-width: 100%; margin-top: 10px; border-radius: 4px; border: 1px solid #0f3460;">
+          `;
+        }
+      } catch (e) {
+        document.getElementById('browseResult').innerHTML = '<p style="color: #e94560;">Error: ' + e.message + '</p>';
+      }
+    }
+
+    // Copy task JSON to clipboard
+    function copyTaskJson() {
+      const jsonText = document.getElementById('taskJsonConfig').textContent;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(jsonText).then(() => {
+          alert('Task JSON copied to clipboard!');
+        }).catch(() => {
+          alert('Failed to copy - use manual selection');
+        });
+      } else {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = jsonText;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Task JSON copied to clipboard!');
+      }
+    }
+
+    // Close modal on click outside
+    document.getElementById('createTaskModal').addEventListener('click', function(e) {
+      if (e.target === this) closeCreateTaskModal();
+    });
+    document.getElementById('editTaskModal').addEventListener('click', function(e) {
+      if (e.target === this) closeEditTaskModal();
+    });
+
+    // Proxy Configuration
+    async function loadProxyConfig() {
+      try {
+        const res = await fetch(API + '/api/proxy/config');
+        const data = await res.json();
+        document.getElementById('blockedDomains').value = (data.blockedDomains || []).join('\n');
+        document.getElementById('macProxyPort').value = data.macProxyPort || 9999;
+        document.getElementById('proxyEnabled').checked = data.proxyEnabled || false;
+
+        const statusColor = data.proxyEnabled ? '#00bf63' : '#e94560';
+        const statusText = data.proxyEnabled ? 'ENABLED' : 'DISABLED';
+        document.getElementById('proxyStatus').innerHTML = `
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 12px; height: 12px; border-radius: 50%; background: ${statusColor};"></div>
+            <span style="font-size: 1.2em; color: ${statusColor}; font-weight: bold;">Browser Proxy: ${statusText}</span>
+          </div>
+          <div style="margin-top: 10px; color: #aaa; font-size: 0.9em;">
+            <p>Mac Proxy Port: ${data.macProxyPort || 9999}</p>
+            <p>Blocked Domains: ${(data.blockedDomains || []).length} configured</p>
+          </div>
+        `;
+      } catch (e) {
+        document.getElementById('proxyStatus').innerHTML = '<p style="color: #e94560;">Error loading proxy config</p>';
+      }
+    }
+
+    async function toggleProxy() {
+      const enabled = document.getElementById('proxyEnabled').checked;
+      try {
+        const res = await fetch(API + '/api/proxy/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ proxyEnabled: enabled })
+        });
+        const data = await res.json();
+        if (data.success) {
+          loadProxyConfig();
+        }
+      } catch (e) {
+        alert('Error toggling proxy: ' + e.message);
+      }
+    }
+
+    async function testMacProxy() {
+      const port = document.getElementById('macProxyPort').value || 9999;
+      const resultEl = document.getElementById('macProxyTestResult');
+      resultEl.innerHTML = '<span style="color: #ffc107;">Testing...</span>';
+
+      try {
+        const res = await fetch(API + '/api/proxy/test?port=' + port);
+        const data = await res.json();
+        if (data.connected) {
+          resultEl.innerHTML = '<span style="color: #00bf63;">Connected!</span>';
+        } else {
+          resultEl.innerHTML = '<span style="color: #e94560;">Not reachable: ' + (data.error || 'Connection failed') + '</span>';
+        }
+      } catch (e) {
+        resultEl.innerHTML = '<span style="color: #e94560;">Error: ' + e.message + '</span>';
+      }
+    }
+
+    async function saveProxyConfig() {
+      const blockedDomains = document.getElementById('blockedDomains').value
+        .split('\n')
+        .map(d => d.trim())
+        .filter(d => d.length > 0);
+      const macProxyPort = parseInt(document.getElementById('macProxyPort').value) || 9999;
+      const proxyEnabled = document.getElementById('proxyEnabled').checked;
+
+      try {
+        const res = await fetch(API + '/api/proxy/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ blockedDomains, macProxyPort, proxyEnabled })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Proxy configuration saved. Restart server for changes to take effect.');
+          loadProxyConfig();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (e) {
+        alert('Error saving proxy config: ' + e.message);
+      }
+    }
+
+    // Load proxy script content
+    async function loadProxyScript() {
+      try {
+        const res = await fetch(API + '/api/proxy/script');
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('proxyScriptContent').value = data.content;
+        } else {
+          document.getElementById('proxyScriptContent').value = '// Error loading script: ' + (data.error || 'Unknown error');
+        }
+      } catch (e) {
+        document.getElementById('proxyScriptContent').value = '// Error loading script: ' + e.message;
+      }
+    }
+
+    // Copy proxy script to clipboard
+    function copyProxyScript() {
+      const textarea = document.getElementById('proxyScriptContent');
+      textarea.select();
+      document.execCommand('copy');
+
+      // Modern clipboard API fallback
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(textarea.value).then(() => {
+          alert('Script copied to clipboard!');
+        }).catch(() => {
+          alert('Script selected - use Ctrl+C to copy');
+        });
+      } else {
+        alert('Script copied to clipboard!');
+      }
+    }
+
+    // Download proxy script as file
+    function downloadProxyScript() {
+      const content = document.getElementById('proxyScriptContent').value;
+      const blob = new Blob([content], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mac_cdn_proxy.js';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // Browser Pool
+    async function loadBrowserStatus() {
+      try {
+        const res = await fetch(API + '/api/browser/status');
+        const data = await res.json();
+
+        const statusEl = document.getElementById('browserPoolStatus');
+        const detailsEl = document.getElementById('browserPoolDetails');
+
+        if (data.hasInstance) {
+          const statusColor = data.inUse ? '#ffc107' : '#00bf63';
+          const statusText = data.inUse ? 'IN USE' : 'IDLE';
+
+          statusEl.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+              <div style="width: 16px; height: 16px; border-radius: 50%; background: ${statusColor};"></div>
+              <span style="font-size: 1.3em; color: ${statusColor}; font-weight: bold;">Browser: ${statusText}</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+              <div>
+                <span style="color: #888;">PID:</span>
+                <span style="color: #fff; margin-left: 8px;">${data.pid || 'N/A'}</span>
+              </div>
+              <div>
+                <span style="color: #888;">Uptime:</span>
+                <span style="color: #fff; margin-left: 8px;">${formatDuration(data.uptimeSec)}</span>
+              </div>
+              <div>
+                <span style="color: #888;">Idle:</span>
+                <span style="color: #fff; margin-left: 8px;">${formatDuration(data.idleSec)}</span>
+              </div>
+              <div>
+                <span style="color: #888;">URLs visited:</span>
+                <span style="color: #00d9ff; margin-left: 8px;">${data.urlCount}</span>
+              </div>
+              <div>
+                <span style="color: #888;">Tasks run:</span>
+                <span style="color: #00d9ff; margin-left: 8px;">${data.taskCount}</span>
+              </div>
+              <div>
+                <span style="color: #888;">Created:</span>
+                <span style="color: #fff; margin-left: 8px;">${data.createdAt ? new Date(data.createdAt).toLocaleTimeString() : 'N/A'}</span>
+              </div>
+            </div>
+          `;
+
+          // Show details section
+          detailsEl.style.display = 'block';
+
+          // Domains
+          document.getElementById('browserDomains').innerHTML = (data.domains || []).map(d =>
+            `<span style="background: #0f3460; padding: 4px 10px; border-radius: 4px; font-size: 0.9em;">${d}</span>`
+          ).join('') || '<span style="color: #888;">No domains visited</span>';
+
+          // Recent tasks
+          document.getElementById('browserTasks').innerHTML = (data.recentTasks || []).map(t =>
+            `<div style="margin-bottom: 8px;">
+              <span style="color: #00d9ff;">${t.taskId}</span>
+              <span style="color: #888; margin-left: 10px;">${t.taskType}</span>
+              <span style="color: #666; margin-left: 10px; font-size: 0.85em;">${new Date(t.time).toLocaleTimeString()}</span>
+            </div>`
+          ).join('') || '<span style="color: #888;">No tasks run yet</span>';
+
+          // Recent URLs
+          document.getElementById('browserUrls').innerHTML = (data.recentUrls || []).map(u =>
+            `<div style="margin-bottom: 6px; word-break: break-all;">
+              <span style="color: #666; font-size: 0.85em;">${new Date(u.time).toLocaleTimeString()}</span>
+              <a href="${u.url}" target="_blank" style="color: #00d9ff; margin-left: 8px; text-decoration: underline;">${u.url}</a>
+            </div>`
+          ).join('') || '<span style="color: #888;">No URLs visited</span>';
+
+        } else {
+          statusEl.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 15px;">
+              <div style="width: 16px; height: 16px; border-radius: 50%; background: #6c757d;"></div>
+              <span style="font-size: 1.3em; color: #6c757d; font-weight: bold;">No Browser Instance</span>
+            </div>
+            <p style="color: #888; margin-top: 10px;">A browser will be launched automatically when you start a task.</p>
+          `;
+          detailsEl.style.display = 'none';
+        }
+      } catch (e) {
+        document.getElementById('browserPoolStatus').innerHTML = `<p style="color: #e94560;">Error loading browser status: ${e.message}</p>`;
+      }
+    }
+
+    async function closeBrowser() {
+      if (!confirm('Are you sure you want to close the browser? This will end any running tasks.')) return;
+      try {
+        const res = await fetch(API + '/api/browser/close', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          alert('Browser closed');
+          loadBrowserStatus();
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Error closing browser: ' + e.message);
+      }
+    }
+
+    function formatDuration(seconds) {
+      if (!seconds && seconds !== 0) return 'N/A';
+      if (seconds < 60) return seconds + 's';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+      return Math.floor(seconds / 3600) + 'h ' + Math.floor((seconds % 3600) / 60) + 'm';
+    }
+
+    // Initial load
+    loadCookies();
+    refreshTasks();
+    loadProxyConfig();
+    loadProxyScript();
+    loadBrowserStatus();
+  </script>
+</body>
+</html>

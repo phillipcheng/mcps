@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "lark-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@larksuiteoapi/lark-mcp",
+        "mcp",
+        "-a", "cli_a82648ea8a79100b",
+        "-s", "YhzaVia5CFTyf5BMDsOQcon3hoDJNi7A",
+        "--domain", "https://open.larksuite.com",
+        "-t", "preset.wiki.default",
+        "--oauth",
+        "--token-mode", "user_access_token"
+      ]
+    }
+  }
+}
