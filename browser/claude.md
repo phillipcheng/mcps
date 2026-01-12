@@ -206,6 +206,62 @@ curl -X POST http://localhost:3456/api/tasks/janus-workorder \
 
 ---
 
+## Chained Task (janus_mini.js)
+
+Execute multiple tasks sequentially. Stops on first error.
+
+### Parameters
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No | Name for the chained task |
+| `subtasks` | Yes | Array of subtask definitions |
+
+Each subtask can be:
+- **janus**: `{ type: "janus", psm, env, idl_branch, api_group_id? }`
+- **workorder**: `{ type: "workorder", psm, env, api_group_id }`
+
+### Flow
+
+1. Execute subtasks one by one in order
+2. Wait for each subtask to complete before starting next
+3. Stop immediately if any subtask fails
+4. Collect all screenshots under one task ID
+
+### API Usage
+
+```bash
+curl -X POST http://localhost:3456/api/tasks/chained \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Deploy to lane1 and lane2",
+    "subtasks": [
+      {
+        "type": "janus",
+        "psm": "oec.reverse.strategy",
+        "env": "boe_lane1",
+        "idl_branch": "feat/my_feature",
+        "api_group_id": "340871"
+      },
+      {
+        "type": "workorder",
+        "psm": "oec.reverse.strategy",
+        "env": "boe_lane1",
+        "api_group_id": "340871"
+      },
+      {
+        "type": "janus",
+        "psm": "oec.reverse.strategy",
+        "env": "boe_lane2",
+        "idl_branch": "feat/my_feature",
+        "api_group_id": "340871"
+      }
+    ]
+  }'
+```
+
+---
+
 # Part 3: Proxy Setup
 
 ## Why Proxy is Needed

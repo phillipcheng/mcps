@@ -340,6 +340,19 @@ async function initDatabase() {
       )
     `);
 
+    // Create task type definitions table for custom task types
+    await dbPool.execute(`
+      CREATE TABLE IF NOT EXISTS janus_task_types (
+        id VARCHAR(64) PRIMARY KEY,
+        name VARCHAR(256) NOT NULL,
+        description TEXT,
+        parameters JSON,
+        subtasks JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
     console.log('[DB] MySQL connected and tables ready');
     return true;
   } catch (error) {
@@ -357,6 +370,10 @@ async function saveTaskToDb(taskId, task) {
       api_group_id: task.api_group_id || null,
       stage: task.stage || null,
       result: task.result || null,
+      name: task.name || null,
+      idl_version: task.idl_version || null,
+      subtasks: task.subtasks || null,
+      currentIndex: task.currentIndex || 0,
       // Add any future flexible fields here
       ...(task.metadata || {})  // Preserve any existing metadata
     };
@@ -379,13 +396,13 @@ async function saveTaskToDb(taskId, task) {
         metadata = VALUES(metadata)
     `, [
       taskId,
-      task.type,
-      task.psm,
-      task.env,
-      task.idl_branch,
-      task.dry_run,
-      task.api_group_id || null,  // Keep in column for backward compat
-      task.status,
+      task.type || null,
+      task.psm || null,
+      task.env || null,
+      task.idl_branch || null,
+      task.dry_run !== undefined ? task.dry_run : null,
+      task.api_group_id || null,
+      task.status || null,
       task.stage || null,
       task.result || null,
       task.error || null,
@@ -410,9 +427,11 @@ function dbRowToTask(row) {
   return {
     id: row.id,
     type: row.type,
+    name: metadata.name || null,
     psm: row.psm,
     env: row.env,
     idl_branch: row.idl_branch,
+    idl_version: metadata.idl_version || null,
     dry_run: row.dry_run === 1 || row.dry_run === true,
     api_group_id: row.api_group_id || metadata.api_group_id || null,
     status: row.status,
@@ -422,6 +441,8 @@ function dbRowToTask(row) {
     logs: row.logs ? (typeof row.logs === 'string' ? JSON.parse(row.logs) : row.logs) : [],
     startTime: row.start_time ? (row.start_time instanceof Date ? row.start_time.toISOString() : row.start_time) : null,
     endTime: row.end_time ? (row.end_time instanceof Date ? row.end_time.toISOString() : row.end_time) : null,
+    subtasks: metadata.subtasks || null,
+    currentIndex: metadata.currentIndex || 0,
     metadata  // Include full metadata for future fields
   };
 }
@@ -695,8 +716,19 @@ async function cleanupOrphanedBrowsers() {
   });
 }
 
-// Run cleanup every 5 minutes
+// Run cleanup every 5 minutes (only when no tasks are running)
 setInterval(() => {
+  // Skip cleanup if any tasks are running
+  const hasRunningTasks = [...tasks.values()].some(t => t.status === 'running');
+  if (hasRunningTasks) {
+    console.log('[CLEANUP] Skipping cleanup - tasks are running');
+    return;
+  }
+  // Skip cleanup if browser pool is in use
+  if (browserPool.inUse) {
+    console.log('[CLEANUP] Skipping cleanup - browser pool in use');
+    return;
+  }
   cleanupOrphanedBrowsers().then(count => {
     if (count > 0) {
       console.log(`[CLEANUP] Cleaned up ${count} orphaned browser processes`);
@@ -952,15 +984,21 @@ app.get('/api/tasks', async (req, res) => {
     const memoryTasks = Array.from(tasks.entries()).map(([id, task]) => ({
       id,
       type: task.type,
+      name: task.name,
       psm: task.psm,
       env: task.env,
       idl_branch: task.idl_branch,
+      idl_version: task.idl_version,
+      api_group_id: task.api_group_id,
       dry_run: task.dry_run,
       status: task.status,
+      stage: task.stage,
       result: task.result,
       error: task.error,
       startTime: task.startTime,
-      endTime: task.endTime
+      endTime: task.endTime,
+      subtasks: task.subtasks,
+      currentIndex: task.currentIndex
     }));
 
     // Combine and deduplicate (prefer memory for running tasks)
@@ -969,6 +1007,9 @@ app.get('/api/tasks', async (req, res) => {
     memoryTasks.forEach(t => taskMap.set(t.id, t)); // Memory overwrites DB for same ID
 
     let taskList = Array.from(taskMap.values());
+
+    // Filter out temp subtask entries (IDs containing _sub) - they are shown under parent task
+    taskList = taskList.filter(t => !t.id.includes('_sub'));
 
     // Apply filters
     if (psm) {
@@ -1004,6 +1045,25 @@ app.get('/api/tasks/:id', async (req, res) => {
   if (!task) {
     return res.status(404).json({ error: 'Task not found' });
   }
+
+  // For running chained tasks, inject real-time logs from temp subtasks
+  if ((task.isChained || task.subtasks) && task.status === 'running' && task.subtasks) {
+    const taskCopy = JSON.parse(JSON.stringify(task));
+    for (let i = 0; i < taskCopy.subtasks.length; i++) {
+      const subtask = taskCopy.subtasks[i];
+      if (subtask.status === 'running') {
+        // Check if there's a temp task with real-time logs
+        const tempTaskId = `${req.params.id}_sub${i}`;
+        const tempTask = tasks.get(tempTaskId);
+        if (tempTask && tempTask.logs) {
+          subtask.logs = tempTask.logs;
+          subtask.stage = tempTask.stage;
+        }
+      }
+    }
+    return res.json({ id: req.params.id, ...taskCopy });
+  }
+
   res.json({ id: req.params.id, ...task });
 });
 
@@ -1057,11 +1117,40 @@ app.patch('/api/tasks/:id', async (req, res) => {
       return res.status(400).json({ error: 'Cannot update running task' });
     }
 
-    // Update allowed fields
-    const allowedFields = ['psm', 'env', 'idl_branch', 'api_group_id', 'dry_run'];
-    for (const field of allowedFields) {
-      if (updates[field] !== undefined) {
-        task[field] = updates[field];
+    // Update allowed fields based on task type
+    if ((task.isChained || task.subtasks)) {
+      // Chained task: update name, type and subtasks
+      if (updates.name !== undefined) {
+        task.name = updates.name;
+      }
+      if (updates.type !== undefined) {
+        task.type = updates.type;
+      }
+      if (updates.subtasks !== undefined && Array.isArray(updates.subtasks)) {
+        // Update subtasks - convert short type names to full type names
+        task.subtasks = updates.subtasks.map(st => ({
+          type: st.type === 'janus' ? 'janus_mini_update' : st.type === 'workorder' ? 'janus_workorder_execute' : st.type,
+          psm: st.psm,
+          env: st.env,
+          idl_branch: st.idl_branch,
+          idl_version: st.idl_version,
+          api_group_id: st.api_group_id,
+          status: 'pending',
+          logs: [],
+          startTime: null,
+          endTime: null,
+          error: null,
+          result: null
+        }));
+        task.currentIndex = 0;
+      }
+    } else {
+      // Non-chained task: update individual fields
+      const allowedFields = ['psm', 'env', 'idl_branch', 'idl_version', 'api_group_id', 'dry_run'];
+      for (const field of allowedFields) {
+        if (updates[field] !== undefined) {
+          task[field] = updates[field];
+        }
       }
     }
 
@@ -1156,6 +1245,47 @@ app.post('/api/tasks/:id/stop', async (req, res) => {
       runningBrowsers.delete(taskId);
     }
 
+    // If this is a chained task, also stop any running subtasks
+    if (task.isChained || task.subtasks) {
+      for (let i = 0; i < (task.subtasks || []).length; i++) {
+        const subtaskId = `${taskId}_sub${i}`;
+        const subtask = task.subtasks[i];
+
+        // Close subtask browser if running
+        const subtaskBrowserInfo = runningBrowsers.get(subtaskId);
+        if (subtaskBrowserInfo) {
+          try {
+            await subtaskBrowserInfo.browser.close();
+            console.log(`[${subtaskId}] Subtask browser closed gracefully`);
+          } catch (e) {
+            if (subtaskBrowserInfo.pid) {
+              forceKillBrowser(subtaskBrowserInfo.pid);
+              console.log(`[${subtaskId}] Force killed subtask browser PID: ${subtaskBrowserInfo.pid}`);
+            }
+          }
+          runningBrowsers.delete(subtaskId);
+        }
+
+        // Mark subtask as stopped if it was running or pending
+        if (subtask && (subtask.status === 'running' || subtask.status === 'pending')) {
+          subtask.status = 'stopped';
+          subtask.error = 'Parent task stopped by user';
+          subtask.endTime = new Date().toISOString();
+          if (!subtask.logs) subtask.logs = [];
+          subtask.logs.push(`[${new Date().toISOString()}] Stopped - parent task stopped by user`);
+        }
+
+        // Also clean up temp task if exists
+        const tempTask = tasks.get(subtaskId);
+        if (tempTask) {
+          tempTask.status = 'stopped';
+          tempTask.error = 'Parent task stopped by user';
+          tasks.delete(subtaskId);
+        }
+      }
+      console.log(`[${taskId}] Stopped all subtasks`);
+    }
+
     // Update task status
     task.status = 'stopped';
     task.error = 'Task stopped by user';
@@ -1214,43 +1344,6 @@ app.post('/api/browsers/kill-all', async (req, res) => {
   }
 });
 
-// API: Update task parameters (without restarting)
-app.patch('/api/tasks/:id', async (req, res) => {
-  const taskId = req.params.id;
-  const updates = req.body;
-
-  try {
-    let task = tasks.get(taskId);
-    if (!task) {
-      const [rows] = await dbPool.query('SELECT * FROM janus_tasks WHERE id = ?', [taskId]);
-      if (rows.length > 0) {
-        task = dbRowToTask(rows[0]);
-      }
-    }
-
-    if (!task) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
-
-    // Update allowed fields (can also update metadata fields)
-    const allowedFields = ['psm', 'env', 'idl_branch', 'dry_run', 'api_group_id'];
-    const applied = [];
-    for (const field of allowedFields) {
-      if (updates[field] !== undefined) {
-        task[field] = updates[field];
-        applied.push(field);
-      }
-    }
-
-    tasks.set(taskId, task);
-    await saveTaskToDb(taskId, task);
-
-    res.json({ success: true, taskId, updated: applied, task });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // API: Restart a failed or stopped task (optionally with updated params)
 app.post('/api/tasks/:id/restart', async (req, res) => {
   const taskId = req.params.id;
@@ -1278,7 +1371,7 @@ app.post('/api/tasks/:id/restart', async (req, res) => {
     }
 
     // Apply updates before restart (if any)
-    const allowedFields = ['psm', 'env', 'idl_branch', 'dry_run', 'api_group_id'];
+    const allowedFields = ['psm', 'env', 'idl_branch', 'idl_version', 'dry_run', 'api_group_id', 'name'];
     const applied = [];
     for (const field of allowedFields) {
       if (updates[field] !== undefined) {
@@ -1287,17 +1380,50 @@ app.post('/api/tasks/:id/restart', async (req, res) => {
       }
     }
 
+    // Handle subtasks update separately to convert types
+    if (updates.subtasks !== undefined && Array.isArray(updates.subtasks)) {
+      task.subtasks = updates.subtasks.map(st => ({
+        type: st.type === 'janus' ? 'janus_mini_update' : st.type === 'workorder' ? 'janus_workorder_execute' : st.type,
+        psm: st.psm,
+        env: st.env,
+        idl_branch: st.idl_branch,
+        idl_version: st.idl_version,
+        api_group_id: st.api_group_id,
+        status: 'pending',
+        logs: [],
+        startTime: null,
+        endTime: null,
+        error: null,
+        result: null
+      }));
+      applied.push('subtasks');
+    }
+
     if (applied.length > 0) {
       console.log(`[${taskId}] Updated before restart: ${applied.join(', ')}`);
     }
-    console.log(`[${taskId}] Task after updates: api_group_id=${task.api_group_id}`);
+    console.log(`[${taskId}] Task after updates: type=${task.type}, api_group_id=${task.api_group_id}`);
 
     // Reset task state for restart
     task.status = 'running';
     task.error = null;
     task.startTime = new Date().toISOString();
     task.endTime = null;
+    task.logs = task.logs || [];
     task.logs.push(`[${new Date().toISOString()}] Task restarted${applied.length > 0 ? ` (updated: ${applied.join(', ')})` : ''}`);
+
+    // For chained tasks, reset subtask statuses
+    if ((task.isChained || task.subtasks) && task.subtasks) {
+      for (const subtask of task.subtasks) {
+        subtask.status = 'pending';
+        subtask.logs = [];
+        subtask.startTime = null;
+        subtask.endTime = null;
+        subtask.error = null;
+        subtask.result = null;
+      }
+      task.currentIndex = 0;
+    }
 
     // Update in memory and clear old screenshots
     tasks.set(taskId, task);
@@ -1319,13 +1445,29 @@ app.post('/api/tasks/:id/restart', async (req, res) => {
     // Return immediately
     res.json({ taskId, status: 'restarted' });
 
-    // Run the task in background
-    runJanusTask(taskId, task).catch(async (err) => {
-      task.status = 'error';
-      task.error = err.message;
-      task.endTime = new Date().toISOString();
-      await saveTaskToDb(taskId, task);
-    });
+    // Run the appropriate task type in background
+    if ((task.isChained || task.subtasks)) {
+      runChainedTask(taskId, task).catch(async (err) => {
+        task.status = 'error';
+        task.error = err.message;
+        task.endTime = new Date().toISOString();
+        await saveTaskToDb(taskId, task);
+      });
+    } else if (task.type === 'janus_workorder_execute') {
+      runWorkorderTask(taskId, task).catch(async (err) => {
+        task.status = 'error';
+        task.error = err.message;
+        task.endTime = new Date().toISOString();
+        await saveTaskToDb(taskId, task);
+      });
+    } else {
+      runJanusTask(taskId, task).catch(async (err) => {
+        task.status = 'error';
+        task.error = err.message;
+        task.endTime = new Date().toISOString();
+        await saveTaskToDb(taskId, task);
+      });
+    }
 
   } catch (error) {
     console.error('[API] Restart task error:', error.message);
@@ -1375,9 +1517,188 @@ app.get('/api/tasks/:id/screenshots/:index', async (req, res) => {
   res.end(img);
 });
 
-// API: Start Janus Mini task
+// Built-in task type definitions
+const builtInTaskTypes = {
+  janus: {
+    name: 'Janus Mini Update',
+    internalType: 'janus_mini_update',
+    params: [
+      { key: 'psm', label: 'PSM', required: true },
+      { key: 'env', label: 'Environment', required: true },
+      { key: 'idl_branch', label: 'IDL Branch', required: true },
+      { key: 'idl_version', label: 'IDL Version', required: false },
+      { key: 'api_group_id', label: 'API Group ID', required: false }
+    ],
+    runner: 'janus'
+  },
+  workorder: {
+    name: 'Execute Workorder',
+    internalType: 'janus_workorder_execute',
+    params: [
+      { key: 'psm', label: 'PSM', required: true },
+      { key: 'env', label: 'Environment', required: true },
+      { key: 'api_group_id', label: 'API Group ID', required: true }
+    ],
+    runner: 'workorder'
+  }
+};
+
+// API: Get built-in task types
+app.get('/api/builtin-types', (req, res) => {
+  const types = Object.entries(builtInTaskTypes).map(([key, def]) => ({
+    id: key,
+    name: def.name,
+    params: def.params
+  }));
+  res.json(types);
+});
+
+// API: Unified task creation endpoint
+app.post('/api/tasks', async (req, res) => {
+  const { type, parameters = {} } = req.body;
+
+  console.log('[API] Unified create task request:', JSON.stringify(req.body));
+
+  if (!type) {
+    return res.status(400).json({ error: 'type is required' });
+  }
+
+  try {
+    // Check if it's a built-in type
+    const builtIn = builtInTaskTypes[type];
+
+    if (builtIn) {
+      // Validate required parameters
+      for (const param of builtIn.params) {
+        if (param.required && !parameters[param.key]) {
+          return res.status(400).json({ error: `Missing required parameter: ${param.key}` });
+        }
+      }
+
+      const taskId = `${type}_${Date.now()}`;
+      const task = {
+        type: builtIn.internalType,
+        psm: parameters.psm,
+        env: parameters.env,
+        idl_branch: parameters.idl_branch || null,
+        idl_version: parameters.idl_version || null,
+        api_group_id: parameters.api_group_id || null,
+        dry_run: parameters.dry_run !== false,
+        status: 'running',
+        logs: [],
+        startTime: new Date().toISOString(),
+        endTime: null,
+        error: null
+      };
+
+      tasks.set(taskId, task);
+      screenshots.set(taskId, []);
+      await saveTaskToDb(taskId, task);
+
+      res.json({ taskId, status: 'started', type: builtIn.internalType });
+
+      // Run appropriate task runner
+      const runner = builtIn.runner === 'janus' ? runJanusTask : runWorkorderTask;
+      runner(taskId, task).catch(async (err) => {
+        task.status = 'error';
+        task.error = err.message;
+        task.endTime = new Date().toISOString();
+        await saveTaskToDb(taskId, task);
+      });
+
+    } else {
+      // Check if it's a custom type from database
+      const [rows] = await dbPool.execute('SELECT * FROM janus_task_types WHERE id = ? OR name = ?', [type, type]);
+      if (rows.length === 0) {
+        return res.status(404).json({
+          error: 'Unknown task type: ' + type,
+          availableBuiltIn: Object.keys(builtInTaskTypes),
+          hint: 'Use GET /api/task-types to see custom types'
+        });
+      }
+
+      const taskType = rows[0];
+      const typeParams = typeof taskType.parameters === 'string' ? JSON.parse(taskType.parameters) : taskType.parameters;
+      const typeSubtasks = typeof taskType.subtasks === 'string' ? JSON.parse(taskType.subtasks) : taskType.subtasks;
+
+      // Validate required parameters
+      for (const param of typeParams) {
+        if (param.required && !parameters[param.name]) {
+          return res.status(400).json({ error: `Missing required parameter: ${param.name}` });
+        }
+      }
+
+      // Build subtasks by substituting parameters
+      const resolvedSubtasks = typeSubtasks.map(st => {
+        const resolved = {};
+        for (const [key, value] of Object.entries(st)) {
+          if (typeof value === 'string' && value.includes('${')) {
+            // Replace all ${param} references
+            let substituted = value.replace(/\$\{(\w+)\}/g, (match, paramName) => {
+              return parameters[paramName] !== undefined ? parameters[paramName] : '';
+            });
+            // Only include the key if it has a value after substitution
+            if (substituted.trim()) {
+              resolved[key] = substituted.trim();
+            }
+          } else {
+            resolved[key] = value;
+          }
+        }
+        return resolved;
+      });
+
+      const taskId = `chained_${Date.now()}`;
+      const task = {
+        type: taskType.name, // Use custom task type name as the type
+        name: parameters.name || taskType.name,
+        isChained: true, // Flag to indicate this is a chained task
+        subtasks: resolvedSubtasks.map((st, i) => ({
+          type: st.type === 'janus' ? 'janus_mini_update' : st.type === 'workorder' ? 'janus_workorder_execute' : st.type,
+          psm: st.psm,
+          env: st.env,
+          idl_branch: st.idl_branch,
+          idl_version: st.idl_version,
+          api_group_id: st.api_group_id,
+          index: i,
+          status: 'pending',
+          logs: [],
+          startTime: null,
+          endTime: null,
+          error: null,
+          result: null
+        })),
+        currentIndex: 0,
+        status: 'running',
+        logs: [`[${new Date().toISOString()}] Task created from type: ${taskType.name}`],
+        startTime: new Date().toISOString(),
+        endTime: null,
+        error: null
+      };
+
+      tasks.set(taskId, task);
+      screenshots.set(taskId, []);
+      await saveTaskToDb(taskId, task);
+
+      res.json({ taskId, status: 'started', type: 'custom', taskTypeName: taskType.name, subtaskCount: task.subtasks.length });
+
+      runChainedTask(taskId, task).catch(async (err) => {
+        task.status = 'error';
+        task.error = err.message;
+        task.endTime = new Date().toISOString();
+        await saveTaskToDb(taskId, task);
+      });
+    }
+
+  } catch (error) {
+    console.error('[API] Create task error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Start Janus Mini task (legacy endpoint)
 app.post('/api/tasks/janus', async (req, res) => {
-  const { psm, env, idl_branch, dry_run = true, api_group_id } = req.body;
+  const { psm, env, idl_branch, dry_run = true, api_group_id, idl_version } = req.body;
 
   console.log('[API] Create task request body:', JSON.stringify(req.body));
 
@@ -1393,6 +1714,7 @@ app.post('/api/tasks/janus', async (req, res) => {
     idl_branch,
     dry_run,
     api_group_id: api_group_id || null,  // Optional: skip list search if provided
+    idl_version: idl_version || null,    // Optional: specific version for downgrade
     status: 'running',
     logs: [],
     startTime: new Date().toISOString(),
@@ -1462,6 +1784,413 @@ app.post('/api/tasks/janus-workorder', async (req, res) => {
     await saveTaskToDb(taskId, task);
   });
 });
+
+// API: Create chained task (multiple tasks executed sequentially)
+app.post('/api/tasks/chained', async (req, res) => {
+  const { name, subtasks } = req.body;
+
+  console.log('[API] Create chained task request body:', JSON.stringify(req.body));
+
+  if (!subtasks || !Array.isArray(subtasks) || subtasks.length === 0) {
+    return res.status(400).json({ error: 'subtasks array is required and must not be empty' });
+  }
+
+  // Validate each subtask
+  for (let i = 0; i < subtasks.length; i++) {
+    const st = subtasks[i];
+    if (!st.type) {
+      return res.status(400).json({ error: `subtask ${i} missing type` });
+    }
+    if (st.type === 'janus' || st.type === 'janus_mini_update') {
+      if (!st.psm || !st.env || !st.idl_branch) {
+        return res.status(400).json({ error: `subtask ${i} (janus) requires psm, env, idl_branch` });
+      }
+    } else if (st.type === 'workorder' || st.type === 'janus_workorder_execute') {
+      if (!st.psm || !st.env || !st.api_group_id) {
+        return res.status(400).json({ error: `subtask ${i} (workorder) requires psm, env, api_group_id` });
+      }
+    } else {
+      return res.status(400).json({ error: `subtask ${i} has unknown type: ${st.type}` });
+    }
+  }
+
+  const taskId = `chained_${Date.now()}`;
+  const task = {
+    type: req.body.type || 'chained',
+    isChained: true,
+    name: name || `Chain of ${subtasks.length} tasks`,
+    subtasks: subtasks.map((st, i) => ({
+      ...st,
+      index: i,
+      status: 'pending',
+      logs: [],
+      startTime: null,
+      endTime: null,
+      error: null,
+      result: null
+    })),
+    currentIndex: 0,
+    status: 'running',
+    logs: [],
+    startTime: new Date().toISOString(),
+    endTime: null,
+    error: null
+  };
+
+  tasks.set(taskId, task);
+  screenshots.set(taskId, []);
+
+  // Save initial task to database
+  await saveTaskToDb(taskId, task);
+
+  // Return immediately, run task in background
+  res.json({ taskId, status: 'started', subtaskCount: subtasks.length });
+
+  // Run the chained task
+  runChainedTask(taskId, task).catch(async (err) => {
+    task.status = 'error';
+    task.error = err.message;
+    task.endTime = new Date().toISOString();
+    await saveTaskToDb(taskId, task);
+  });
+});
+
+// ============ Task Type Definitions API ============
+
+// API: List all task type definitions
+app.get('/api/task-types', async (req, res) => {
+  try {
+    if (!dbPool) {
+      return res.json([]);
+    }
+    const [rows] = await dbPool.execute('SELECT * FROM janus_task_types ORDER BY name');
+    const types = rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      parameters: typeof row.parameters === 'string' ? JSON.parse(row.parameters) : row.parameters,
+      subtasks: typeof row.subtasks === 'string' ? JSON.parse(row.subtasks) : row.subtasks,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+    res.json(types);
+  } catch (error) {
+    console.error('[API] Get task types error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get single task type definition
+app.get('/api/task-types/:id', async (req, res) => {
+  try {
+    if (!dbPool) {
+      return res.status(404).json({ error: 'Task type not found' });
+    }
+    const [rows] = await dbPool.execute('SELECT * FROM janus_task_types WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Task type not found' });
+    }
+    const row = rows[0];
+    res.json({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      parameters: typeof row.parameters === 'string' ? JSON.parse(row.parameters) : row.parameters,
+      subtasks: typeof row.subtasks === 'string' ? JSON.parse(row.subtasks) : row.subtasks,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    });
+  } catch (error) {
+    console.error('[API] Get task type error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Create task type definition
+app.post('/api/task-types', async (req, res) => {
+  const { name, description, parameters, subtasks } = req.body;
+
+  if (!name || !parameters || !subtasks) {
+    return res.status(400).json({ error: 'name, parameters, and subtasks are required' });
+  }
+
+  const id = `tasktype_${Date.now()}`;
+
+  try {
+    await dbPool.execute(
+      'INSERT INTO janus_task_types (id, name, description, parameters, subtasks) VALUES (?, ?, ?, ?, ?)',
+      [id, name, description || null, JSON.stringify(parameters), JSON.stringify(subtasks)]
+    );
+    res.json({ id, name, status: 'created' });
+  } catch (error) {
+    console.error('[API] Create task type error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Update task type definition
+app.patch('/api/task-types/:id', async (req, res) => {
+  const { name, description, parameters, subtasks } = req.body;
+  const id = req.params.id;
+
+  try {
+    const updates = [];
+    const values = [];
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(name);
+    }
+    if (description !== undefined) {
+      updates.push('description = ?');
+      values.push(description);
+    }
+    if (parameters !== undefined) {
+      updates.push('parameters = ?');
+      values.push(JSON.stringify(parameters));
+    }
+    if (subtasks !== undefined) {
+      updates.push('subtasks = ?');
+      values.push(JSON.stringify(subtasks));
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id);
+    await dbPool.execute(`UPDATE janus_task_types SET ${updates.join(', ')} WHERE id = ?`, values);
+    res.json({ id, status: 'updated' });
+  } catch (error) {
+    console.error('[API] Update task type error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Delete task type definition
+app.delete('/api/task-types/:id', async (req, res) => {
+  try {
+    await dbPool.execute('DELETE FROM janus_task_types WHERE id = ?', [req.params.id]);
+    res.json({ success: true, deleted: req.params.id });
+  } catch (error) {
+    console.error('[API] Delete task type error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Create task from task type definition
+app.post('/api/task-types/:id/create-task', async (req, res) => {
+  const typeId = req.params.id;
+  const params = req.body;  // User-provided parameter values
+
+  try {
+    // Get the task type definition
+    const [rows] = await dbPool.execute('SELECT * FROM janus_task_types WHERE id = ?', [typeId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Task type not found' });
+    }
+
+    const taskType = rows[0];
+    const typeParams = typeof taskType.parameters === 'string' ? JSON.parse(taskType.parameters) : taskType.parameters;
+    const typeSubtasks = typeof taskType.subtasks === 'string' ? JSON.parse(taskType.subtasks) : taskType.subtasks;
+
+    // Validate required parameters
+    for (const param of typeParams) {
+      if (param.required && !params[param.name]) {
+        return res.status(400).json({ error: `Missing required parameter: ${param.name}` });
+      }
+    }
+
+    // Build subtasks by substituting parameters
+    const resolvedSubtasks = typeSubtasks.map(st => {
+      const resolved = {};
+      for (const [key, value] of Object.entries(st)) {
+        if (typeof value === 'string' && value.includes('${')) {
+          // Replace all ${param} references
+          let substituted = value.replace(/\$\{(\w+)\}/g, (match, paramName) => {
+            return params[paramName] !== undefined ? params[paramName] : '';
+          });
+          // Only include the key if it has a value after substitution
+          if (substituted.trim()) {
+            resolved[key] = substituted.trim();
+          }
+        } else {
+          resolved[key] = value;
+        }
+      }
+      return resolved;
+    });
+
+    // Create the chained task
+    const taskId = `chained_${Date.now()}`;
+    const task = {
+      type: 'chained',
+      name: params.name || taskType.name,
+      subtasks: resolvedSubtasks.map((st, i) => ({
+        type: st.type === 'janus' ? 'janus_mini_update' : st.type === 'workorder' ? 'janus_workorder_execute' : st.type,
+        psm: st.psm,
+        env: st.env,
+        idl_branch: st.idl_branch,
+        idl_version: st.idl_version,
+        api_group_id: st.api_group_id,
+        index: i,
+        status: 'pending',
+        logs: [],
+        startTime: null,
+        endTime: null,
+        error: null,
+        result: null
+      })),
+      currentIndex: 0,
+      status: 'running',
+      logs: [`[${new Date().toISOString()}] Task created from type: ${taskType.name}`],
+      startTime: new Date().toISOString(),
+      endTime: null,
+      error: null
+    };
+
+    tasks.set(taskId, task);
+    screenshots.set(taskId, []);
+    await saveTaskToDb(taskId, task);
+
+    res.json({ taskId, status: 'started', subtaskCount: task.subtasks.length, taskTypeName: taskType.name });
+
+    // Run the chained task
+    runChainedTask(taskId, task).catch(async (err) => {
+      task.status = 'error';
+      task.error = err.message;
+      task.endTime = new Date().toISOString();
+      await saveTaskToDb(taskId, task);
+    });
+  } catch (error) {
+    console.error('[API] Create task from type error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Run a chained task - executes subtasks sequentially
+ */
+async function runChainedTask(taskId, task) {
+  const log = (msg) => {
+    const line = `[${new Date().toISOString()}] ${msg}`;
+    console.log(`[${taskId}] ${msg}`);
+    task.logs.push(line);
+  };
+
+  log(`Starting chained task: ${task.name}`);
+  log(`Total subtasks: ${task.subtasks.length}`);
+
+  for (let i = 0; i < task.subtasks.length; i++) {
+    const subtask = task.subtasks[i];
+    task.currentIndex = i;
+    task.stage = `Running subtask ${i + 1}/${task.subtasks.length}`;
+    await saveTaskToDb(taskId, task);
+
+    log(`\n=== Subtask ${i + 1}/${task.subtasks.length}: ${subtask.type} ===`);
+    log(`Parameters: ${JSON.stringify({ psm: subtask.psm, env: subtask.env, idl_branch: subtask.idl_branch, api_group_id: subtask.api_group_id })}`);
+
+    subtask.status = 'running';
+    subtask.startTime = new Date().toISOString();
+    await saveTaskToDb(taskId, task);
+
+    try {
+      // Create a temporary task object for the subtask
+      const tempTaskId = `${taskId}_sub${i}`;
+      const tempTask = {
+        type: subtask.type === 'janus' ? 'janus_mini_update' :
+              subtask.type === 'workorder' ? 'janus_workorder_execute' : subtask.type,
+        psm: subtask.psm,
+        env: subtask.env,
+        idl_branch: subtask.idl_branch,
+        idl_version: subtask.idl_version,
+        api_group_id: subtask.api_group_id,
+        status: 'running',
+        logs: [],
+        startTime: new Date().toISOString(),
+        endTime: null,
+        error: null
+      };
+
+      // Store temporarily for screenshot access
+      tasks.set(tempTaskId, tempTask);
+      screenshots.set(tempTaskId, []);
+
+      // Run the appropriate task runner
+      if (tempTask.type === 'janus_mini_update') {
+        await runJanusTask(tempTaskId, tempTask);
+      } else if (tempTask.type === 'janus_workorder_execute') {
+        await runWorkorderTask(tempTaskId, tempTask);
+      }
+
+      // Copy results back to subtask
+      subtask.status = tempTask.status;
+      subtask.logs = tempTask.logs;
+      subtask.endTime = tempTask.endTime || new Date().toISOString();
+      subtask.error = tempTask.error;
+      subtask.result = tempTask.result;
+      subtask.stage = tempTask.stage;
+
+      // Copy screenshots to main task
+      const subScreenshots = screenshots.get(tempTaskId) || [];
+      const mainScreenshots = screenshots.get(taskId) || [];
+      for (const ss of subScreenshots) {
+        mainScreenshots.push({
+          ...ss,
+          label: `[${i + 1}] ${ss.label}`
+        });
+      }
+      screenshots.set(taskId, mainScreenshots);
+
+      // Clean up temp task
+      tasks.delete(tempTaskId);
+      screenshots.delete(tempTaskId);
+
+      // Log subtask result
+      if (subtask.status === 'completed') {
+        log(`Subtask ${i + 1} completed: ${subtask.result || 'Success'}`);
+      } else if (subtask.status === 'error') {
+        log(`Subtask ${i + 1} failed: ${subtask.error}`);
+        // Stop chain on error
+        task.status = 'error';
+        task.error = `Subtask ${i + 1} failed: ${subtask.error}`;
+        task.endTime = new Date().toISOString();
+        await saveTaskToDb(taskId, task);
+        return;
+      }
+
+    } catch (err) {
+      subtask.status = 'error';
+      subtask.error = err.message;
+      subtask.endTime = new Date().toISOString();
+      log(`Subtask ${i + 1} exception: ${err.message}`);
+
+      // Stop chain on error
+      task.status = 'error';
+      task.error = `Subtask ${i + 1} exception: ${err.message}`;
+      task.endTime = new Date().toISOString();
+      await saveTaskToDb(taskId, task);
+      return;
+    }
+
+    await saveTaskToDb(taskId, task);
+
+    // Small delay between subtasks
+    if (i < task.subtasks.length - 1) {
+      log('Waiting 2 seconds before next subtask...');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  // All subtasks completed
+  task.status = 'completed';
+  task.stage = 'All subtasks completed';
+  task.endTime = new Date().toISOString();
+  task.result = `Completed ${task.subtasks.length} subtasks`;
+  log(`\n=== Chained task completed! ===`);
+  log(`Total subtasks: ${task.subtasks.length}`);
+  await saveTaskToDb(taskId, task);
+}
 
 // API: Browse URL (simple)
 app.post('/api/browse', async (req, res) => {

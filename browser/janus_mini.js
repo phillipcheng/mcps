@@ -164,27 +164,54 @@ function createJanusTaskRunner(ctx) {
         await page.goto(directUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         browserPool.recordUrl(directUrl, taskId);
 
-        // Poll for page content to be ready
+        // Poll for Edit button to be ready (the pencil icon we click for version list)
+        // Check both main page and iframes
         const pageLoadResult = await pollForCondition(
           async () => {
-            const status = await page.evaluate(() => {
-              const pageText = document.body.innerText;
-              const selects = document.querySelectorAll('.ant-select');
-              const hasIdlContent = pageText.includes('Current lane') ||
-                                    pageText.includes('Version') ||
-                                    pageText.includes('Deployment');
+            // First check main page
+            let status = await page.evaluate(() => {
+              const editIcons = document.querySelectorAll('.anticon-edit, [aria-label="edit"], span[class*="anticon-edit"]');
+              const hasEditButton = editIcons.length > 0;
               const isLoading = !!document.querySelector('.ant-spin-spinning');
               return {
-                ready: hasIdlContent && selects.length > 0 && !isLoading,
-                hasIdlContent,
-                selectCount: selects.length,
+                ready: hasEditButton && !isLoading,
+                hasEditButton,
+                editButtonCount: editIcons.length,
                 isLoading,
-                textLen: pageText.length
+                textLen: document.body.innerText.length,
+                frameIndex: -1
               };
             });
+
+            if (status.ready) return status;
+
+            // Check iframes if not found in main page
+            const frames = page.frames();
+            for (let i = 0; i < frames.length; i++) {
+              try {
+                const frameStatus = await frames[i].evaluate(() => {
+                  const editIcons = document.querySelectorAll('.anticon-edit, [aria-label="edit"], span[class*="anticon-edit"]');
+                  const hasEditButton = editIcons.length > 0;
+                  const isLoading = !!document.querySelector('.ant-spin-spinning');
+                  return {
+                    ready: hasEditButton && !isLoading,
+                    hasEditButton,
+                    editButtonCount: editIcons.length,
+                    isLoading,
+                    textLen: document.body.innerText.length
+                  };
+                });
+                if (frameStatus.hasEditButton) {
+                  return { ...frameStatus, frameIndex: i };
+                }
+              } catch (e) {
+                // Frame not accessible
+              }
+            }
+
             return status;
           },
-          { timeout: 60000, interval: 1000, description: 'PageLoad', log }
+          { timeout: 120000, interval: 1000, description: 'PageLoad', log }
         );
 
         // Check if login required
@@ -695,75 +722,11 @@ function createJanusTaskRunner(ctx) {
       } // End of normal flow (else block)
 
       // Step 6: Update IDL branch (both paths converge here)
+      // Content already verified by first check, no need for redundant second check
       await setStage('Updating IDL branch');
       log(`Step 6: Setting IDL branch to: ${task.idl_branch}...`);
 
-      // Wait for the IDL config content to load - look for "Current idl:" text as indicator
-      log('Waiting for IDL config content to load (looking for "Current idl:" or "Current lane")...');
-      let contentLoaded = false;
       let targetFrame = page;
-      let refreshCount = 0;
-      const MAX_REFRESHES = 2;
-      const WAIT_TIMEOUT = 25; // seconds
-
-      while (!contentLoaded && refreshCount <= MAX_REFRESHES) {
-        for (let waitAttempt = 0; waitAttempt < WAIT_TIMEOUT; waitAttempt++) {
-          // Check all frames for content
-          const frames = page.frames();
-
-          for (const frame of frames) {
-            try {
-              const frameInfo = await frame.evaluate(() => {
-                const selects = document.querySelectorAll('.ant-select');
-                const allText = document.body.innerText;
-                // Look for "Current idl:" which indicates content is loaded
-                const hasCurrentIdl = allText.includes('Current idl:') || allText.includes('Current IDL:');
-                const hasLane = allText.includes('Current lane') ||
-                               (allText.includes('lane') && selects.length > 0);
-                return {
-                  selectCount: selects.length,
-                  hasCurrentIdl,
-                  hasLane,
-                  isLoading: !!document.querySelector('.ant-spin-spinning'),
-                  textPreview: allText.substring(0, 300).replace(/\s+/g, ' ')
-                };
-              });
-
-              // Content is loaded when we see "Current idl:" or have lane with selects
-              if (frameInfo.hasCurrentIdl || (frameInfo.hasLane && frameInfo.selectCount > 0)) {
-                log(`Content found after ${waitAttempt + 1}s (refresh ${refreshCount}): hasCurrentIdl=${frameInfo.hasCurrentIdl}, hasLane=${frameInfo.hasLane}, selects=${frameInfo.selectCount}`);
-                targetFrame = frame;
-                contentLoaded = true;
-                break;
-              }
-            } catch (e) {
-              // Frame not accessible
-            }
-          }
-
-          if (contentLoaded) break;
-
-          if (waitAttempt % 5 === 0) {
-            log(`Waiting for content... (${waitAttempt}s, refresh ${refreshCount})`);
-          }
-          await new Promise(r => setTimeout(r, 1000));
-        }
-
-        if (!contentLoaded && refreshCount < MAX_REFRESHES) {
-          refreshCount++;
-          log(`Content not loaded after ${WAIT_TIMEOUT}s, refreshing page (attempt ${refreshCount})...`);
-          await addScreenshot(page, `6_before_refresh_${refreshCount}`);
-          await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
-          await new Promise(r => setTimeout(r, 5000)); // Wait for page to stabilize after refresh
-        } else {
-          break;
-        }
-      }
-
-      if (!contentLoaded) {
-        log('Warning: Content not fully loaded after all refresh attempts, continuing anyway...');
-        await addScreenshot(page, '6_content_not_loaded');
-      }
 
       // Scroll to ensure content is visible
       await targetFrame.evaluate(() => {
@@ -794,84 +757,30 @@ function createJanusTaskRunner(ctx) {
       log(`Buttons: [${pageElements.buttonTexts.join(', ')}]`);
       log(`Page text preview: ${pageElements.pageText.replace(/\s+/g, ' ').substring(0, 200)}`);
 
-      // STEP 6a: First, select the correct lane from "Current lane:" dropdown
-      // The page might default to prod, so we need to ensure the correct lane is selected
-      await setStage('Selecting lane');
-      log(`Selecting lane: ${task.env}`);
+      // STEP 6a: Skip lane selection - URL already has correct lane parameter (lane=${task.env})
+      // The page should load with the correct lane from the URL
+      log(`Lane should be set via URL parameter: ${task.env}`);
 
-      // Click the "Current lane:" dropdown (use targetFrame which may be an iframe)
-      const laneClicked = await targetFrame.evaluate((targetEnv) => {
-        // Find the flex container with "Current lane:" text
+      // Verify lane is correct by checking the displayed value
+      const laneInfo = await targetFrame.evaluate(() => {
         const allDivs = document.querySelectorAll('div');
         for (const div of allDivs) {
           const text = div.textContent;
           if (text && text.includes('Current lane')) {
-            const select = div.querySelector('.ant-select-selector');
-            if (select) {
-              const currentValue = div.querySelector('.ant-select-selection-item');
-              select.click();
-              return {
-                clicked: true,
-                type: 'current-lane-flex',
-                currentValue: currentValue ? currentValue.textContent.trim() : 'unknown'
-              };
+            const currentValue = div.querySelector('.ant-select-selection-item');
+            if (currentValue) {
+              return { found: true, currentLane: currentValue.textContent.trim() };
             }
           }
         }
+        return { found: false };
+      });
 
-        // Fallback: look for any lane-related select in tabs extra content
-        const extraContent = document.querySelector('.ant-tabs-extra-content');
-        if (extraContent) {
-          const select = extraContent.querySelector('.ant-select-selector');
-          if (select) {
-            select.click();
-            return { clicked: true, type: 'tabs-extra', currentValue: select.textContent.trim() };
-          }
+      if (laneInfo.found) {
+        log(`Current lane displayed: ${laneInfo.currentLane}`);
+        if (!laneInfo.currentLane.includes(task.env)) {
+          log(`WARNING: Lane mismatch - expected ${task.env}, got ${laneInfo.currentLane}. URL should have set it correctly.`);
         }
-
-        return { clicked: false };
-      }, task.env);
-
-      log(`Lane dropdown click result: ${JSON.stringify(laneClicked)}`);
-
-      if (laneClicked.clicked) {
-        log(`Current lane value: ${laneClicked.currentValue}`);
-        await new Promise(r => setTimeout(r, 500));
-
-        // Check if we need to change the lane
-        if (!laneClicked.currentValue.includes(task.env)) {
-          log(`Need to change lane from ${laneClicked.currentValue} to ${task.env}`);
-
-          // Find and click the target lane option
-          const laneSelected = await targetFrame.evaluate((targetEnv) => {
-            const options = document.querySelectorAll('.ant-select-item, .ant-select-item-option');
-            for (const option of options) {
-              if (option.textContent.includes(targetEnv)) {
-                option.click();
-                return { selected: true, text: option.textContent.trim() };
-              }
-            }
-            const available = Array.from(options).map(o => o.textContent.trim()).filter(t => t.length > 0).slice(0, 10);
-            return { selected: false, available };
-          }, task.env);
-
-          if (laneSelected.selected) {
-            log(`Selected lane: ${laneSelected.text}`);
-            await new Promise(r => setTimeout(r, 3000)); // Wait for page to update after lane change
-            await addScreenshot(page, '6a_lane_selected');
-          } else {
-            log(`Could not find lane in dropdown. Available: ${(laneSelected.available || []).join(', ')}`);
-            // Close dropdown
-            await page.keyboard.press('Escape');
-          }
-        } else {
-          log(`Lane already correct: ${laneClicked.currentValue}`);
-          // Close dropdown without changing
-          await page.keyboard.press('Escape');
-        }
-        await new Promise(r => setTimeout(r, 1000));
-      } else {
-        log('Could not find lane dropdown, continuing...');
       }
 
       // STEP 6b: Click the small edit icon (pencil icon) to edit the IDL branch
@@ -894,32 +803,55 @@ function createJanusTaskRunner(ctx) {
       });
       log(`Current version info: idl="${currentVersionInfo.currentIdl}", version="${currentVersionInfo.version}"`);
 
-      // First, find and click the small edit icon (pencil) - it has aria-label="edit" and class="anticon-edit"
-      const editIconClicked = await targetFrame.evaluate(() => {
-        // Look for the edit icon button (small pencil icon)
-        // It's a button with anticon-edit inside
-        const editIcons = document.querySelectorAll('.anticon-edit, [aria-label="edit"], span[class*="anticon-edit"]');
-        for (const icon of editIcons) {
-          // Find the clickable parent (usually a button)
-          const button = icon.closest('button') || icon.closest('[role="button"]') || icon;
-          if (button) {
-            button.click();
-            return { clicked: true, type: 'edit-icon' };
+      // Click the Edit button (pencil icon) - check main page and iframes
+      let editIconClicked = { clicked: false };
+
+      // Helper function to try clicking Edit button in a frame
+      const tryClickEditInFrame = async (frame) => {
+        return await frame.evaluate(() => {
+          const editIcons = document.querySelectorAll('.anticon-edit, [aria-label="edit"], span[class*="anticon-edit"]');
+          for (const icon of editIcons) {
+            const button = icon.closest('button') || icon.closest('[role="button"]') || icon;
+            if (button) {
+              button.click();
+              return { clicked: true, type: 'edit-icon' };
+            }
+          }
+
+          // Fallback: look for button with edit icon inside
+          const buttons = document.querySelectorAll('button.ant-btn-icon-only, button.ant-btn-text');
+          for (const btn of buttons) {
+            const hasEditIcon = btn.querySelector('.anticon-edit, [aria-label="edit"]');
+            if (hasEditIcon) {
+              btn.click();
+              return { clicked: true, type: 'button-with-edit-icon' };
+            }
+          }
+
+          return { clicked: false };
+        });
+      };
+
+      // Try main page first
+      editIconClicked = await tryClickEditInFrame(targetFrame);
+
+      // If not found, try all iframes
+      if (!editIconClicked.clicked) {
+        const frames = page.frames();
+        for (let i = 0; i < frames.length; i++) {
+          try {
+            const result = await tryClickEditInFrame(frames[i]);
+            if (result.clicked) {
+              editIconClicked = { ...result, frameIndex: i };
+              targetFrame = frames[i]; // Update targetFrame to the frame where Edit was found
+              log(`Found Edit button in frame ${i}`);
+              break;
+            }
+          } catch (e) {
+            // Frame not accessible
           }
         }
-
-        // Fallback: look for button with edit icon inside
-        const buttons = document.querySelectorAll('button.ant-btn-icon-only, button.ant-btn-text');
-        for (const btn of buttons) {
-          const hasEditIcon = btn.querySelector('.anticon-edit, [aria-label="edit"]');
-          if (hasEditIcon) {
-            btn.click();
-            return { clicked: true, type: 'button-with-edit-icon' };
-          }
-        }
-
-        return { clicked: false };
-      });
+      }
 
       log(`Edit icon click result: ${JSON.stringify(editIconClicked)}`);
 
@@ -928,7 +860,8 @@ function createJanusTaskRunner(ctx) {
         await new Promise(r => setTimeout(r, 2000)); // Wait for edit mode/modal to open
         await addScreenshot(page, '6a_edit_icon_clicked');
       } else {
-        log('Warning: Could not find edit icon (pencil), continuing to look for branch field...');
+        await addScreenshot(page, '6a_edit_button_not_found');
+        throw new Error('Edit button not found. The IDL config section may not have loaded properly.');
       }
 
       // Log form elements for debugging
@@ -1083,49 +1016,179 @@ function createJanusTaskRunner(ctx) {
       }
 
       if (!branchUpdated) {
-        log('Warning: Could not find branch input/select field. Taking screenshot for debugging.');
-        await addScreenshot(page, '6b_branch_not_found');
+        // This shouldn't happen since we throw error if Edit button not found
+        // But if branch selection failed after clicking Edit, throw an error
+        await addScreenshot(page, '6b_branch_not_selected');
+        throw new Error('Could not select branch/version from the dropdown after clicking Edit button.');
       }
 
-      // Check if version actually changed - if same, skip confirmation check and notification wait
+      // Check if version actually changed
       const versionChanged = selectedVersion && currentVersionInfo.version && selectedVersion !== currentVersionInfo.version;
+
+      if (!versionChanged) {
+        log(`Version not changed. Selected: ${selectedVersion}, Current: ${currentVersionInfo.version}`);
+        // Version is already at the selected version, which is fine - continue to deployment
+        log('Version already up to date, continuing to deployment...');
+      }
 
       // Only check for confirmation popup if version changed
       if (versionChanged) {
         log('Version changed, checking for confirmation popup...');
         await new Promise(r => setTimeout(r, 1500));
 
-        for (let confirmAttempt = 0; confirmAttempt < 3; confirmAttempt++) {
-          const confirmHandled = await targetFrame.evaluate(() => {
-            // Look for confirmation modal/popup buttons
-            const confirmButtons = document.querySelectorAll('.ant-modal-confirm-btns button, .ant-modal-footer button, .ant-btn-primary, .ant-popconfirm button');
+        // Take screenshot to see what's on screen
+        await addScreenshot(page, '6a_before_confirm');
+
+        // Helper function to find and click confirmation button
+        const findAndClickConfirm = async (context, contextName) => {
+          return await context.evaluate(() => {
+            // First, log what modals/popups are visible
+            const modals = document.querySelectorAll('.ant-modal, .ant-popover, .ant-popconfirm, [class*="modal"], [class*="popover"]');
+            const modalInfo = Array.from(modals).map(m => ({
+              class: m.className,
+              visible: m.offsetParent !== null || window.getComputedStyle(m).display !== 'none',
+              text: m.textContent.substring(0, 200)
+            })).filter(m => m.visible);
+
+            // Check if there's an "ongoing work order" warning
+            const pageText = document.body.textContent.toLowerCase();
+            const hasWorkorderWarning = pageText.includes('ongoing') || pageText.includes('work order') ||
+                                        pageText.includes('workorder') || pageText.includes('正在进行');
+
+            // Look for confirmation modal/popup buttons - prioritize primary/danger buttons for warnings
+            const confirmButtons = document.querySelectorAll('.ant-modal-confirm-btns button, .ant-modal-footer button, .ant-btn-primary, .ant-btn-danger, .ant-popconfirm button, .ant-popover button, .ant-popconfirm-buttons button');
+            const allButtonsInfo = Array.from(confirmButtons).map(btn => ({
+              text: btn.textContent.trim(),
+              disabled: btn.disabled,
+              visible: btn.offsetParent !== null,
+              className: btn.className
+            }));
+
+            // For ongoing workorder warning, look for confirm/continue/proceed buttons
+            const confirmKeywords = ['ok', 'confirm', '确定', '确认', 'yes', 'continue', 'proceed', '继续'];
+
             for (const btn of confirmButtons) {
-              const text = btn.textContent.toLowerCase();
-              if (text.includes('ok') || text.includes('confirm') || text.includes('确定') || text.includes('yes')) {
+              const text = btn.textContent.toLowerCase().trim();
+              const isVisible = btn.offsetParent !== null;
+              const isDisabled = btn.disabled;
+              const matchesKeyword = confirmKeywords.some(kw => text.includes(kw));
+
+              if (matchesKeyword && isVisible && !isDisabled) {
                 btn.click();
-                return { clicked: true, text: btn.textContent.trim() };
+                return { clicked: true, text: btn.textContent.trim(), source: 'confirmButtons', hasWorkorderWarning, allButtons: allButtonsInfo, modals: modalInfo };
               }
             }
 
             // Also check for any popup close/accept buttons
-            const popupButtons = document.querySelectorAll('[class*="modal"] button, [class*="popup"] button, [class*="dialog"] button, [class*="popconfirm"] button');
+            const popupButtons = document.querySelectorAll('[class*="modal"] button, [class*="popup"] button, [class*="dialog"] button, [class*="popconfirm"] button, [class*="popover"] button');
             for (const btn of popupButtons) {
-              const text = btn.textContent.toLowerCase();
-              if (text.includes('ok') || text.includes('confirm') || text.includes('确定') || text.includes('accept')) {
+              const text = btn.textContent.toLowerCase().trim();
+              const isVisible = btn.offsetParent !== null;
+              const isDisabled = btn.disabled;
+              const matchesKeyword = confirmKeywords.some(kw => text.includes(kw));
+
+              if (matchesKeyword && isVisible && !isDisabled) {
                 btn.click();
-                return { clicked: true, text: btn.textContent.trim() };
+                return { clicked: true, text: btn.textContent.trim(), source: 'popupButtons', hasWorkorderWarning, allButtons: allButtonsInfo, modals: modalInfo };
               }
             }
 
-            return { clicked: false };
+            return { clicked: false, hasWorkorderWarning, allButtons: allButtonsInfo, modals: modalInfo };
           });
+        };
+
+        // Check for ongoing workorder warning first - this requires user intervention
+        const checkForWorkorderWarning = async (context) => {
+          return await context.evaluate(() => {
+            const pageText = document.body.textContent.toLowerCase();
+            const hasOngoingWorkorder = pageText.includes('ongoing') ||
+                                        pageText.includes('work order') ||
+                                        pageText.includes('workorder') ||
+                                        pageText.includes('正在进行') ||
+                                        pageText.includes('未完成');
+
+            // Get modal/popup text for error message
+            const modals = document.querySelectorAll('.ant-modal, .ant-popover, .ant-popconfirm, [class*="modal"], [class*="popover"]');
+            const modalText = Array.from(modals)
+              .filter(m => m.offsetParent !== null || window.getComputedStyle(m).display !== 'none')
+              .map(m => m.textContent.trim())
+              .join(' ');
+
+            return { hasOngoingWorkorder, modalText: modalText.substring(0, 500) };
+          });
+        };
+
+        // Check main page and iframe for workorder warning
+        let workorderCheck = await checkForWorkorderWarning(page);
+        if (!workorderCheck.hasOngoingWorkorder) {
+          workorderCheck = await checkForWorkorderWarning(targetFrame);
+        }
+
+        if (workorderCheck.hasOngoingWorkorder) {
+          log(`ERROR: Ongoing workorder detected - requires user intervention`);
+          log(`Modal text: ${workorderCheck.modalText}`);
+          await addScreenshot(page, '6_ongoing_workorder_error');
+          throw new Error(`Cannot change IDL version: there is an ongoing workorder that requires user intervention. Please complete or cancel the existing workorder first.`);
+        }
+
+        // Handle normal confirmation dialogs
+        let totalConfirmsClicked = 0;
+        for (let confirmAttempt = 0; confirmAttempt < 5; confirmAttempt++) {
+          // First check main page for confirmation dialog (modals often render at page level)
+          let confirmHandled = await findAndClickConfirm(page, 'main page');
+          log(`Main page confirm check: ${JSON.stringify(confirmHandled)}`);
 
           if (confirmHandled.clicked) {
-            log(`Clicked confirmation button: ${confirmHandled.text}`);
-            await new Promise(r => setTimeout(r, 1000));
+            totalConfirmsClicked++;
+            log(`Clicked confirmation button #${totalConfirmsClicked} in main page: ${confirmHandled.text}`);
+            await addScreenshot(page, `6b_after_confirm_${totalConfirmsClicked}`);
+            await new Promise(r => setTimeout(r, 1500)); // Wait for next popup to appear
+
+            // Re-check for workorder warning after clicking confirm (it might appear as second popup)
+            workorderCheck = await checkForWorkorderWarning(page);
+            if (!workorderCheck.hasOngoingWorkorder) {
+              workorderCheck = await checkForWorkorderWarning(targetFrame);
+            }
+            if (workorderCheck.hasOngoingWorkorder) {
+              log(`ERROR: Ongoing workorder warning appeared after confirmation`);
+              await addScreenshot(page, '6_ongoing_workorder_error');
+              throw new Error(`Cannot change IDL version: there is an ongoing workorder that requires user intervention. Please complete or cancel the existing workorder first.`);
+            }
+
+            continue; // Check for more confirmations
+          }
+
+          // Then check iframe
+          confirmHandled = await findAndClickConfirm(targetFrame, 'iframe');
+          log(`Iframe confirm check: ${JSON.stringify(confirmHandled)}`);
+
+          if (confirmHandled.clicked) {
+            totalConfirmsClicked++;
+            log(`Clicked confirmation button #${totalConfirmsClicked} in iframe: ${confirmHandled.text}`);
+            await addScreenshot(page, `6b_after_confirm_${totalConfirmsClicked}`);
+            await new Promise(r => setTimeout(r, 1500)); // Wait for next popup to appear
+
+            // Re-check for workorder warning
+            workorderCheck = await checkForWorkorderWarning(page);
+            if (!workorderCheck.hasOngoingWorkorder) {
+              workorderCheck = await checkForWorkorderWarning(targetFrame);
+            }
+            if (workorderCheck.hasOngoingWorkorder) {
+              log(`ERROR: Ongoing workorder warning appeared after confirmation`);
+              await addScreenshot(page, '6_ongoing_workorder_error');
+              throw new Error(`Cannot change IDL version: there is an ongoing workorder that requires user intervention. Please complete or cancel the existing workorder first.`);
+            }
+
+            continue; // Check for more confirmations
+          }
+
+          // No more confirmations found
+          if (totalConfirmsClicked > 0) {
+            log(`All ${totalConfirmsClicked} confirmation(s) handled`);
             break;
           }
 
+          log(`Confirmation attempt ${confirmAttempt + 1}: no confirm button found yet`);
           await new Promise(r => setTimeout(r, 500));
         }
       } else {
@@ -1735,7 +1798,8 @@ function createWorkorderTaskRunner(ctx) {
             const pageText = document.body.innerText;
             const hasTable = !!document.querySelector('.ant-table, table');
             const hasReleaseHistory = pageText.includes('Release history') || pageText.includes('发布历史') ||
-                                      pageText.includes('Unpublished') || pageText.includes('未发布');
+                                      pageText.includes('Unpublished') || pageText.includes('未发布') ||
+                                      pageText.includes('Waiting') || pageText.includes('等待中');
             const isLoading = !!document.querySelector('.ant-spin-spinning');
             return {
               ready: hasTable && !isLoading,
@@ -1746,7 +1810,7 @@ function createWorkorderTaskRunner(ctx) {
           });
           return status;
         },
-        { timeout: 30000, interval: 1000, description: 'ReleaseHistoryLoad', log }
+        { timeout: 60000, interval: 3000, description: 'ReleaseHistoryLoad', log }
       );
 
       await addScreenshot(page, '1_release_history');
@@ -1774,7 +1838,7 @@ function createWorkorderTaskRunner(ctx) {
             debugInfo.subgroups.push(rowText.substring(0, 80));
           }
 
-          if (isWaiting) {
+          if (hasPsm && isWaiting) {
             debugInfo.waitingRows.push(rowText.substring(0, 80));
 
             // Click the row itself to open workorder details
@@ -2068,100 +2132,183 @@ function createWorkorderTaskRunner(ctx) {
 
       await addScreenshot(page, '2_workorder_detail');
 
-      if (!publishBtnReady.ready) {
-        log(`Warning: 开始发布 button not ready. hasBtn=${publishBtnReady.hasPublishBtn}, disabled=${publishBtnReady.isDisabled}, loading=${publishBtnReady.hasLoading}`);
-        task.status = 'error';
-        task.error = '开始发布 button not ready';
-        task.endTime = new Date().toISOString();
-        await saveTaskToDb(taskId, task);
-        browserPool.release(log);
-        runningBrowsers.delete(taskId);
-        return;
-      }
+      // Check if we're already at 完成确认 stage (skip 开始发布)
+      const alreadyAtConfirmStage = await targetFrame.evaluate(() => {
+        const pageText = document.body.innerText;
+        const hasConfirmStage = pageText.includes('完成确认');
 
-      log('开始发布 button ready, clicking...');
-
-      // Use targetFrame (which is the bytecycle iframe) instead of page
-      const publishClicked = await targetFrame.evaluate(() => {
-        // Support both Ant Design and Arco Design
-        const buttons = document.querySelectorAll('button, .ant-btn, .arco-btn');
-        const debugInfo = [];
-        for (const btn of buttons) {
-          const text = (btn.textContent || '').trim();
-          debugInfo.push({ text: text.substring(0, 30), disabled: btn.disabled, visible: btn.offsetParent !== null });
-          if (text.includes('开始发布') || text.includes('Start publish') ||
-              text.includes('Publish') || text.includes('发布')) {
-            // Don't match buttons that are too short or too generic
-            if (text.length > 1 && !text.toLowerCase().startsWith('start') || text === 'Start publish') {
-              try {
-                btn.click();
-                return { clicked: true, text: text, method: 'click' };
-              } catch (e) {
-                // Try dispatchEvent as fallback
-                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                return { clicked: true, text: text, method: 'dispatch' };
-              }
+        // Check if 完成确认 is the current/active stage
+        const allElements = document.querySelectorAll('*');
+        let isConfirmStageActive = false;
+        for (const el of allElements) {
+          const text = (el.textContent || '').trim();
+          if (text === '完成确认' || text.startsWith('完成确认')) {
+            const classes = el.className + ' ' + (el.parentElement?.className || '');
+            if (classes.includes('active') || classes.includes('current') ||
+                classes.includes('highlight') || classes.includes('processing') ||
+                classes.includes('wait')) {
+              isConfirmStageActive = true;
+              break;
             }
           }
         }
-        return { clicked: false, debugInfo: debugInfo.slice(0, 15) };
+
+        // Also check if there's no 开始发布 button but there is 确认 button
+        const buttons = document.querySelectorAll('button, .arco-btn');
+        let hasPublishBtn = false;
+        let hasConfirmBtn = false;
+        for (const btn of buttons) {
+          const text = (btn.textContent || '').trim();
+          if (text.includes('开始发布')) hasPublishBtn = true;
+          if (text === '确认' || text === 'Confirm') hasConfirmBtn = true;
+        }
+
+        return {
+          isAtConfirmStage: hasConfirmStage && (isConfirmStageActive || (!hasPublishBtn && hasConfirmBtn)),
+          hasConfirmStage,
+          isConfirmStageActive,
+          hasPublishBtn,
+          hasConfirmBtn
+        };
       });
 
-      log(`Click result: ${JSON.stringify(publishClicked).substring(0, 300)}`);
+      log(`Current stage check: ${JSON.stringify(alreadyAtConfirmStage)}`);
 
-      if (publishClicked.clicked) {
+      // Determine if we need to click 开始发布 or skip to 确认
+      let needToClickPublish = publishBtnReady.ready;
+      let skipToConfirm = false;
+
+      if (!publishBtnReady.ready) {
+        // Check if we're already at 完成确认 stage
+        if (alreadyAtConfirmStage.isAtConfirmStage) {
+          log('Already at 完成确认 stage, skipping 开始发布 and going directly to 确认...');
+          await addScreenshot(page, '2b_already_at_confirm');
+          skipToConfirm = true;
+        } else {
+          log(`Warning: 开始发布 button not ready. hasBtn=${publishBtnReady.hasPublishBtn}, disabled=${publishBtnReady.isDisabled}, loading=${publishBtnReady.hasLoading}`);
+          task.status = 'error';
+          task.error = '开始发布 button not ready and not at 完成确认 stage';
+          task.endTime = new Date().toISOString();
+          await saveTaskToDb(taskId, task);
+          browserPool.release(log);
+          runningBrowsers.delete(taskId);
+          return;
+        }
+      }
+
+      // If we need to click 开始发布, do it now
+      if (needToClickPublish) {
+        log('开始发布 button ready, clicking...');
+
+        // Use targetFrame (which is the bytecycle iframe) instead of page
+        const publishClicked = await targetFrame.evaluate(() => {
+          // Support both Ant Design and Arco Design
+          const buttons = document.querySelectorAll('button, .ant-btn, .arco-btn');
+          const debugInfo = [];
+          for (const btn of buttons) {
+            const text = (btn.textContent || '').trim();
+            debugInfo.push({ text: text.substring(0, 30), disabled: btn.disabled, visible: btn.offsetParent !== null });
+            if (text.includes('开始发布') || text.includes('Start publish') ||
+                text.includes('Publish') || text.includes('发布')) {
+              // Don't match buttons that are too short or too generic
+              if (text.length > 1 && !text.toLowerCase().startsWith('start') || text === 'Start publish') {
+                try {
+                  btn.click();
+                  return { clicked: true, text: text, method: 'click' };
+                } catch (e) {
+                  // Try dispatchEvent as fallback
+                  btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                  return { clicked: true, text: text, method: 'dispatch' };
+                }
+              }
+            }
+          }
+          return { clicked: false, debugInfo: debugInfo.slice(0, 15) };
+        });
+
+        log(`Click result: ${JSON.stringify(publishClicked).substring(0, 300)}`);
+
+        if (!publishClicked.clicked) {
+          log('Warning: Could not click 开始发布 button');
+          task.status = 'error';
+          task.error = 'Could not click 开始发布 button';
+          task.endTime = new Date().toISOString();
+          await saveTaskToDb(taskId, task);
+          browserPool.release(log);
+          runningBrowsers.delete(taskId);
+          return;
+        }
+
         log(`Clicked 开始发布 button: ${publishClicked.text}`);
         await new Promise(r => setTimeout(r, 3000));
         await addScreenshot(page, '3_publish_started');
+      }
 
-        // Wait for workflow to progress to "完成确认" stage and click "确认" button
-        await setStage('Waiting for 完成确认 stage');
-        log('Waiting for 完成确认 stage to be highlighted...');
+      // Now wait for 完成确认 stage (or we're already there if skipToConfirm)
+      await setStage('Waiting for 完成确认 stage');
+      log('Waiting for 完成确认 stage to be highlighted...');
 
-        // Poll for the 确认 button to appear (when 完成确认 stage is active)
-        const confirmBtnReady = await pollForCondition(
-          async () => {
-            const status = await targetFrame.evaluate(() => {
-              // Check if 完成确认 stage is highlighted (has specific styling or class)
-              const pageText = document.body.innerText;
-              const hasConfirmStage = pageText.includes('完成确认');
+      // Poll for the 完成确认 stage to be active (highlighted)
+      const confirmStageReady = await pollForCondition(
+        async () => {
+          const status = await targetFrame.evaluate(() => {
+            const pageText = document.body.innerText;
+            const hasConfirmStage = pageText.includes('完成确认');
 
-              // Look for the 确认 button (not the one in modal, but the workflow confirmation button)
-              const buttons = document.querySelectorAll('button, .arco-btn');
-              let confirmBtn = null;
-              for (const btn of buttons) {
-                const text = (btn.textContent || '').trim();
-                // Match "确认" but not "完成确认" or other compound words
-                if (text === '确认' || text === 'Confirm') {
-                  // Check if this button is visible and not disabled
-                  const isVisible = btn.offsetParent !== null;
-                  const isDisabled = btn.disabled || btn.classList.contains('arco-btn-disabled');
-                  if (isVisible && !isDisabled) {
-                    confirmBtn = btn;
-                    break;
-                  }
+            // Check if 完成确认 node is highlighted (active stage)
+            const allElements = document.querySelectorAll('*');
+            let isConfirmStageActive = false;
+            for (const el of allElements) {
+              const text = (el.textContent || '').trim();
+              if (text === '完成确认' || text.startsWith('完成确认')) {
+                const classes = el.className + ' ' + (el.parentElement?.className || '');
+                if (classes.includes('active') || classes.includes('current') ||
+                    classes.includes('highlight') || classes.includes('processing') ||
+                    classes.includes('wait')) {
+                  isConfirmStageActive = true;
+                  break;
                 }
               }
+            }
 
-              return {
-                ready: !!confirmBtn,
-                hasConfirmStage,
-                hasConfirmBtn: !!confirmBtn,
-                buttonCount: buttons.length
-              };
-            });
-            return status;
-          },
-          { timeout: 120000, interval: 3000, description: 'ConfirmBtnReady', log }
-        );
+            // Look for the 确认 button
+            const buttons = document.querySelectorAll('button, .arco-btn, [class*="btn"]');
+            let confirmBtn = null;
+            for (const btn of buttons) {
+              const text = (btn.textContent || '').trim();
+              if (text === '确认' || text === 'Confirm') {
+                const isVisible = btn.offsetParent !== null;
+                const isDisabled = btn.disabled || btn.classList.contains('arco-btn-disabled');
+                if (isVisible && !isDisabled) {
+                  confirmBtn = btn;
+                  break;
+                }
+              }
+            }
 
-        await addScreenshot(page, '4_confirm_stage');
+            return {
+              ready: hasConfirmStage && (!!confirmBtn || isConfirmStageActive),
+              hasConfirmStage,
+              hasConfirmBtn: !!confirmBtn,
+              isConfirmStageActive,
+              buttonCount: buttons.length
+            };
+          });
+          return status;
+        },
+        { timeout: skipToConfirm ? 30000 : 120000, interval: 3000, description: 'ConfirmBtnReady', log }
+      );
 
-        if (confirmBtnReady.ready) {
-          log('完成确认 stage reached, clicking 确认 button...');
+      await addScreenshot(page, '4_confirm_stage');
 
-          const confirmClicked = await targetFrame.evaluate(() => {
-            const buttons = document.querySelectorAll('button, .arco-btn');
+      if (confirmStageReady.ready || skipToConfirm) {
+        log('完成确认 stage reached, looking for 确认 button...');
+
+        // Helper function to try clicking confirm button (including "..." menu)
+        const tryClickConfirm = async () => {
+          // First try to find 确认 button directly
+          let confirmClicked = await targetFrame.evaluate(() => {
+            const buttons = document.querySelectorAll('button, .arco-btn, [class*="btn"]');
             for (const btn of buttons) {
               const text = (btn.textContent || '').trim();
               if (text === '确认' || text === 'Confirm') {
@@ -2169,39 +2316,134 @@ function createWorkorderTaskRunner(ctx) {
                 const isDisabled = btn.disabled || btn.classList.contains('arco-btn-disabled');
                 if (isVisible && !isDisabled) {
                   btn.click();
-                  return { clicked: true, text: text };
+                  return { clicked: true, text: text, method: 'direct' };
                 }
               }
             }
             return { clicked: false };
           });
 
-          log(`Confirm click result: ${JSON.stringify(confirmClicked)}`);
+          // If not found directly, try to find it in "..." dropdown menu
+          if (!confirmClicked.clicked) {
+            log('确认 button not visible directly, looking for "..." menu...');
 
-          if (confirmClicked.clicked) {
-            log('Clicked 确认 button successfully');
-            await new Promise(r => setTimeout(r, 3000));
-            await addScreenshot(page, '5_confirmed');
+            // Look for and click the "..." or "more" button
+            const moreClicked = await targetFrame.evaluate(() => {
+              // Look for "..." button or icon button that might contain more options
+              const possibleMoreButtons = document.querySelectorAll(
+                'button, .arco-btn, [class*="btn"], [class*="more"], [class*="dropdown"], [class*="icon"]'
+              );
 
-            await setStage('Workorder confirmed');
-            task.status = 'completed';
-            task.result = 'Workorder publish confirmed';
-          } else {
-            log('Warning: Could not click 确认 button');
-            await setStage('Publish initiated (confirm pending)');
-            task.status = 'completed';
-            task.result = 'Workorder publish initiated, manual confirm may be needed';
+              for (const btn of possibleMoreButtons) {
+                const text = (btn.textContent || '').trim();
+                const isVisible = btn.offsetParent !== null;
+
+                // Match "..." or similar more options indicators
+                if (isVisible && (text === '...' || text === '···' || text === '•••' ||
+                    text === '更多' || text === 'More' ||
+                    btn.className.includes('more') || btn.className.includes('ellipsis') ||
+                    btn.className.includes('dropdown-trigger'))) {
+                  btn.click();
+                  return { clicked: true, text: text };
+                }
+
+                // Also check for icon-only buttons (might have aria-label or title)
+                const ariaLabel = btn.getAttribute('aria-label') || '';
+                const title = btn.getAttribute('title') || '';
+                if (isVisible && (ariaLabel.includes('more') || ariaLabel.includes('更多') ||
+                    title.includes('more') || title.includes('更多'))) {
+                  btn.click();
+                  return { clicked: true, text: ariaLabel || title };
+                }
+              }
+
+              // Also try clicking any visible "..." text
+              const allSpans = document.querySelectorAll('span, div');
+              for (const span of allSpans) {
+                const text = (span.textContent || '').trim();
+                if ((text === '...' || text === '···' || text === '•••') && span.offsetParent !== null) {
+                  span.click();
+                  return { clicked: true, text: text, element: 'span' };
+                }
+              }
+
+              return { clicked: false };
+            });
+
+            if (moreClicked.clicked) {
+              log(`Clicked "..." menu: ${JSON.stringify(moreClicked)}`);
+              await new Promise(r => setTimeout(r, 1000)); // Wait for dropdown to appear
+              await addScreenshot(page, '4b_more_menu');
+
+              // Now try to find 确认 in the dropdown
+              confirmClicked = await targetFrame.evaluate(() => {
+                // Look in dropdown/popover/menu that just appeared
+                const dropdowns = document.querySelectorAll(
+                  '.arco-dropdown, .arco-popover, .arco-menu, [class*="dropdown"], [class*="popover"], [class*="menu"], [class*="overlay"]'
+                );
+
+                // First check in dropdown containers
+                for (const dropdown of dropdowns) {
+                  const items = dropdown.querySelectorAll('button, .arco-btn, [class*="btn"], [class*="item"], a, span, div');
+                  for (const item of items) {
+                    const text = (item.textContent || '').trim();
+                    if (text === '确认' || text === 'Confirm') {
+                      const isVisible = item.offsetParent !== null;
+                      if (isVisible) {
+                        item.click();
+                        return { clicked: true, text: text, method: 'dropdown' };
+                      }
+                    }
+                  }
+                }
+
+                // Also check all visible buttons again (dropdown might have added new ones)
+                const allButtons = document.querySelectorAll('button, .arco-btn, [class*="btn"], [class*="item"]');
+                for (const btn of allButtons) {
+                  const text = (btn.textContent || '').trim();
+                  if (text === '确认' || text === 'Confirm') {
+                    const isVisible = btn.offsetParent !== null;
+                    const isDisabled = btn.disabled || btn.classList.contains('arco-btn-disabled');
+                    if (isVisible && !isDisabled) {
+                      btn.click();
+                      return { clicked: true, text: text, method: 'dropdown-fallback' };
+                    }
+                  }
+                }
+
+                return { clicked: false };
+              });
+            } else {
+              log('Could not find "..." menu button');
+            }
           }
-        } else {
-          log('Warning: 完成确认 stage not reached within timeout');
-          await setStage('Publish initiated');
+
+          return confirmClicked;
+        };
+
+        const confirmClicked = await tryClickConfirm();
+        log(`Confirm click result: ${JSON.stringify(confirmClicked)}`);
+
+        if (confirmClicked.clicked) {
+          log(`Clicked 确认 button successfully (method: ${confirmClicked.method})`);
+          await new Promise(r => setTimeout(r, 3000));
+          await addScreenshot(page, '5_confirmed');
+
+          await setStage('Workorder confirmed');
           task.status = 'completed';
-          task.result = 'Workorder publish initiated, confirm stage not reached';
+          task.result = 'Workorder publish confirmed';
+        } else {
+          log('Warning: Could not click 确认 button (not found directly or in menu)');
+          await addScreenshot(page, '5_confirm_failed');
+          await setStage('Publish initiated (confirm pending)');
+          task.status = 'completed';
+          task.result = 'Workorder publish initiated, manual confirm may be needed';
         }
       } else {
-        log('Warning: Could not click 开始发布 button');
-        task.status = 'error';
-        task.error = 'Could not click 开始发布 button';
+        log('Warning: 完成确认 stage not reached within timeout');
+        await setStage('Publish initiated');
+        task.status = 'completed';
+        task.result = 'Workorder publish initiated, confirm stage not reached';
       }
 
       task.endTime = new Date().toISOString();

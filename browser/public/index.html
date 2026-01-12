@@ -4,12 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Browser Automation UI</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 10px 0; }
     h1 { color: #00d9ff; margin-bottom: 20px; }
     h2 { color: #00d9ff; margin: 20px 0 10px; font-size: 1.2em; }
-    .container { max-width: 1400px; margin: 0 auto; }
+    .container { width: 100%; max-width: none; margin: 0; padding: 0; }
     .card { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
     .card h3 { color: #00d9ff; margin-bottom: 15px; }
     input, textarea, select { width: 100%; padding: 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #eee; margin-bottom: 10px; }
@@ -55,12 +58,17 @@
     .tab-content.active { display: block; }
 
     /* Task table */
-    .task-table { width: 100%; border-collapse: collapse; }
-    .task-table th, .task-table td { padding: 10px; text-align: left; border-bottom: 1px solid #0f3460; }
-    .task-table th { color: #00d9ff; background: #0d1b2a; }
+    .table-container { overflow-x: auto; }
+    .task-table { width: 100%; border-collapse: collapse; min-width: 800px; }
+    .task-table th, .task-table td { padding: 10px; text-align: left; border-bottom: 1px solid #0f3460; white-space: nowrap; }
+    .task-table th { color: #00d9ff; background: #0d1b2a; position: sticky; top: 0; }
     .task-table tr:hover { background: #1a3a5c; cursor: pointer; }
     .task-table tr.selected { background: #1a3a5c; }
     .checkbox-col { width: 40px; }
+    @media (max-width: 600px) {
+      .task-table { min-width: 600px; }
+      .task-table th, .task-table td { padding: 6px 8px; font-size: 0.85em; }
+    }
 
     /* Pagination */
     .pagination { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 15px; }
@@ -93,16 +101,18 @@
           <div>
             <button class="btn-primary" onclick="openCreateTaskModal()">+ Create Task</button>
             <button class="btn-secondary" onclick="refreshTasks()">Refresh</button>
+            <button class="btn-success" onclick="chainSelectedTasks()" id="chainSelectedBtn" style="display: none;">Chain Selected</button>
             <button class="btn-danger" onclick="deleteSelectedTasks()" id="deleteSelectedBtn" style="display: none;">Delete Selected</button>
           </div>
         </div>
+        <div class="table-container">
         <table class="task-table">
           <thead>
             <tr>
               <th class="checkbox-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
               <th>Task ID</th>
               <th>Type</th>
-              <th>PSM</th>
+              <th>PSM / Name</th>
               <th>Env</th>
               <th>IDL Branch</th>
               <th>Status</th>
@@ -113,6 +123,7 @@
           </thead>
           <tbody id="taskTableBody"></tbody>
         </table>
+        </div>
         <div id="stopTaskSection" style="display: none; margin-top: 15px; padding: 15px; background: #0d1b2a; border-radius: 4px;">
           <span id="runningTaskInfo" style="color: #ffc107;"></span>
           <button class="btn-danger" onclick="stopRunningTask()" style="margin-left: 10px;">Stop Running Task</button>
@@ -124,11 +135,29 @@
         <div class="two-col">
           <div>
             <div id="taskInfo"></div>
-            <h4 style="margin-top: 15px; color: #00d9ff;">Logs</h4>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+              <h4 style="color: #00d9ff; margin: 0;">Logs</h4>
+              <label style="font-size: 0.85em; color: #aaa; display: flex; align-items: center; gap: 5px;">
+                <input type="checkbox" id="logsAutoScroll" checked onchange="window.logsAutoScroll = this.checked">
+                Auto-scroll
+              </label>
+            </div>
             <div id="taskLogs" class="log-box"></div>
           </div>
           <div>
-            <h4 style="color: #00d9ff;">Screenshots</h4>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <h4 style="color: #00d9ff; margin: 0;">Screenshots</h4>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-size: 0.85em; color: #aaa;">Per page:</label>
+                <select id="screenshotsPerPageSelect" onchange="changeScreenshotsPerPage(this.value)" style="width: auto; padding: 4px 8px; margin: 0;">
+                  <option value="8">8</option>
+                  <option value="16" selected>16</option>
+                  <option value="24">24</option>
+                  <option value="32">32</option>
+                  <option value="48">48</option>
+                </select>
+              </div>
+            </div>
             <div id="taskScreenshots" class="screenshot-grid"></div>
             <div id="screenshotPagination" class="pagination" style="display: none;">
               <button class="btn-secondary btn-small" onclick="prevScreenshotPage()">← Prev</button>
@@ -299,34 +328,33 @@ node mac_cdn_proxy.js</code></pre>
     <!-- Task Types Tab -->
     <div id="tab-taskTypes" class="tab-content">
       <div class="card">
-        <h3>⚙️ Available Task Types</h3>
-        <p class="info">These are the automation task types supported by the system.</p>
-        <div style="margin-top: 20px;">
+        <h3>⚙️ Custom Task Types</h3>
+        <p class="info">Define reusable task templates with parameter mappings.</p>
+        <div style="display: flex; gap: 10px; margin: 15px 0;">
+          <button class="btn-primary" onclick="openCreateTaskTypeModal()">+ Create Task Type</button>
+          <button class="btn-secondary" onclick="refreshTaskTypes()">Refresh</button>
+        </div>
+        <div id="taskTypesList" style="margin-top: 15px;">
+          <p style="color: #666;">Loading task types...</p>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 20px;">
+        <h3>📚 Built-in Task Types</h3>
+        <div style="margin-top: 15px;">
           <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
             <h4 style="color: #00d9ff; margin-bottom: 10px;">🚀 Janus Mini Update</h4>
             <p style="color: #aaa; font-size: 0.9em;">Updates IDL branch configuration, clicks Deployment → Release.</p>
-            <ul style="color: #aaa; font-size: 0.9em; margin-left: 20px; margin-top: 10px;">
-              <li>Navigate to Janus IDL config page</li>
-              <li>Select lane and verify settings</li>
-              <li>Choose version from IDL branch</li>
-              <li>Click Deployment → Release</li>
-            </ul>
             <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> PSM, Environment, IDL Branch</p>
-            <p style="color: #aaa; font-size: 0.9em;"><strong>Optional:</strong> API Group ID (e.g., 340871), IDL Version</p>
           </div>
-
-          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 10px;">
+          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
             <h4 style="color: #00d9ff; margin-bottom: 10px;">📋 Execute Workorder</h4>
             <p style="color: #aaa; font-size: 0.9em;">Executes a pending workorder (clicks "开始发布" and "确认").</p>
-            <ul style="color: #aaa; font-size: 0.9em; margin-left: 20px; margin-top: 10px;">
-              <li>Navigate to release history page</li>
-              <li>Find first row with "Waiting" status</li>
-              <li>Click row to open workorder details</li>
-              <li>Wait for bits iframe to load</li>
-              <li>Click "开始发布" (Start publish)</li>
-              <li>Wait for "完成确认" stage, click "确认"</li>
-            </ul>
             <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> PSM, Environment (Lane), API Group ID</p>
+          </div>
+          <div style="background: #0f3460; padding: 15px; border-radius: 4px;">
+            <h4 style="color: #00d9ff; margin-bottom: 10px;">🔗 Chained Task</h4>
+            <p style="color: #aaa; font-size: 0.9em;">Execute multiple tasks sequentially. Stops on first error.</p>
           </div>
         </div>
       </div>
@@ -355,26 +383,63 @@ node mac_cdn_proxy.js</code></pre>
 
       <label style="color: #aaa; font-size: 0.9em;">Task Type</label>
       <select id="newTaskType" onchange="toggleTaskTypeFields()">
-        <option value="janus">Janus Mini Update</option>
-        <option value="workorder">Execute Workorder</option>
+        <optgroup label="Built-in Types">
+          <option value="janus">Janus Mini Update</option>
+          <option value="workorder">Execute Workorder</option>
+          <option value="chained">Chained Task (Multiple)</option>
+        </optgroup>
+        <optgroup id="customTypeOptions" label="Custom Types">
+        </optgroup>
       </select>
-      <label style="color: #aaa; font-size: 0.9em;">PSM</label>
-      <input type="text" id="newPsm" placeholder="e.g., oec.reverse.strategy">
-      <label style="color: #aaa; font-size: 0.9em;">Environment (Lane)</label>
-      <input type="text" id="newEnv" placeholder="e.g., boe_feat_system_deleete">
-      <div id="janusOnlyFields">
-        <label style="color: #aaa; font-size: 0.9em;">IDL Branch (required for Janus Update)</label>
-        <input type="text" id="newIdlBranch" placeholder="e.g., feat/sell_rule">
-        <label style="color: #aaa; font-size: 0.9em;">API Group ID (optional shortcut)</label>
-        <input type="text" id="newApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
-        <label style="color: #aaa; font-size: 0.9em;">IDL Version (optional, for version downgrade)</label>
-        <input type="text" id="newIdlVersion" placeholder="e.g., specific version number">
+
+      <!-- Single Task Fields -->
+      <div id="singleTaskFields">
+        <label style="color: #aaa; font-size: 0.9em;">PSM</label>
+        <input type="text" id="newPsm" placeholder="e.g., oec.reverse.strategy">
+        <label style="color: #aaa; font-size: 0.9em;">Environment (Lane)</label>
+        <input type="text" id="newEnv" placeholder="e.g., boe_feat_system_deleete">
+        <div id="janusOnlyFields">
+          <label style="color: #aaa; font-size: 0.9em;">IDL Branch (required for Janus Update)</label>
+          <input type="text" id="newIdlBranch" placeholder="e.g., feat/sell_rule">
+          <label style="color: #aaa; font-size: 0.9em;">API Group ID (optional shortcut)</label>
+          <input type="text" id="newApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+          <label style="color: #aaa; font-size: 0.9em;">IDL Version (optional, for version downgrade)</label>
+          <input type="text" id="newIdlVersion" placeholder="e.g., specific version number">
+        </div>
+        <div id="workorderOnlyFields" style="display: none;">
+          <label style="color: #aaa; font-size: 0.9em;">API Group ID (required)</label>
+          <input type="text" id="newWorkorderApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+        </div>
       </div>
-      <div id="workorderOnlyFields" style="display: none;">
-        <label style="color: #aaa; font-size: 0.9em;">API Group ID (required)</label>
-        <input type="text" id="newWorkorderApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+
+      <!-- Chained Task Fields -->
+      <div id="chainedTaskFields" style="display: none;">
+        <label style="color: #aaa; font-size: 0.9em;">Chain Name (optional)</label>
+        <input type="text" id="newChainName" placeholder="e.g., Deploy to multiple lanes">
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+          <label style="color: #00d9ff; font-size: 0.9em; margin: 0;">Subtasks</label>
+          <button class="btn-secondary btn-small" onclick="addSubtask()">+ Add Subtask</button>
+        </div>
+
+        <div id="subtaskList" style="max-height: 300px; overflow-y: auto;"></div>
+
+        <div style="background: #0d1b2a; padding: 10px; border-radius: 4px; margin-top: 10px;">
+          <label style="color: #aaa; font-size: 0.85em;">Or paste subtasks JSON array:</label>
+          <textarea id="subtasksJson" placeholder='[{"type": "janus", "psm": "...", "env": "...", "idl_branch": "...", "idl_version": "...", "api_group_id": "..."}, {"type": "workorder", "psm": "...", "env": "...", "api_group_id": "..."}]' style="min-height: 60px; font-family: monospace; font-size: 0.8em; margin-top: 5px;"></textarea>
+        </div>
       </div>
-      <div style="display: flex; gap: 10px;">
+
+      <!-- Custom Task Type Fields -->
+      <div id="customTypeFields" style="display: none;">
+        <div id="customTypeInfo" style="background: #0d1b2a; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+          <span style="color: #00d9ff;" id="customTypeName"></span>
+          <p style="color: #888; font-size: 0.85em; margin: 5px 0 0 0;" id="customTypeDescription"></p>
+        </div>
+        <div id="customTypeParams"></div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
         <button class="btn-success" onclick="createTask()">Create Task</button>
         <button class="btn-secondary" onclick="closeCreateTaskModal()">Cancel</button>
       </div>
@@ -388,22 +453,90 @@ node mac_cdn_proxy.js</code></pre>
       <input type="hidden" id="editTaskId">
       <label style="color: #aaa; font-size: 0.9em;">Task Type</label>
       <input type="text" id="editTaskType" readonly style="background: #0d1b2a; color: #888; cursor: not-allowed;">
-      <label style="color: #aaa; font-size: 0.9em;">PSM</label>
-      <input type="text" id="editPsm" placeholder="e.g., oec.reverse.strategy">
-      <label style="color: #aaa; font-size: 0.9em;">Environment</label>
-      <input type="text" id="editEnv" placeholder="e.g., boe_feat_system_deleete">
-      <div id="editJanusFields">
-        <label style="color: #aaa; font-size: 0.9em;">IDL Branch</label>
-        <input type="text" id="editIdlBranch" placeholder="e.g., feat/sell_rule">
-        <label style="color: #aaa; font-size: 0.9em;">IDL Version (optional)</label>
-        <input type="text" id="editIdlVersion" placeholder="e.g., specific version number">
+
+      <!-- Non-chained task fields -->
+      <div id="editNonChainedFields">
+        <label style="color: #aaa; font-size: 0.9em;">PSM</label>
+        <input type="text" id="editPsm" placeholder="e.g., oec.reverse.strategy">
+        <label style="color: #aaa; font-size: 0.9em;">Environment</label>
+        <input type="text" id="editEnv" placeholder="e.g., boe_feat_system_deleete">
+        <div id="editJanusFields">
+          <label style="color: #aaa; font-size: 0.9em;">IDL Branch</label>
+          <input type="text" id="editIdlBranch" placeholder="e.g., feat/sell_rule">
+          <label style="color: #aaa; font-size: 0.9em;">IDL Version (optional)</label>
+          <input type="text" id="editIdlVersion" placeholder="e.g., specific version number">
+        </div>
+        <label style="color: #aaa; font-size: 0.9em;">API Group ID</label>
+        <input type="text" id="editApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
       </div>
-      <label style="color: #aaa; font-size: 0.9em;">API Group ID</label>
-      <input type="text" id="editApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
-      <div style="display: flex; gap: 10px;">
-        <button class="btn-primary" onclick="saveTaskEdit()">Save</button>
-        <button class="btn-success" onclick="saveAndRestartTask()">Save & Restart</button>
+
+      <!-- Chained task fields -->
+      <div id="editChainedFields" style="display: none;">
+        <label style="color: #aaa; font-size: 0.9em;">Chain Name</label>
+        <input type="text" id="editChainName" placeholder="e.g., Deploy to multiple lanes">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+          <label style="color: #00d9ff; font-size: 0.9em; margin: 0;">Subtasks</label>
+          <button class="btn-secondary btn-small" onclick="addEditSubtask()">+ Add Subtask</button>
+        </div>
+        <div id="editSubtaskList" style="max-height: 250px; overflow-y: auto;"></div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <button id="editSaveBtn" class="btn-primary" onclick="saveTaskEdit()">Save</button>
+        <button id="editSaveRestartBtn" class="btn-success" onclick="saveAndRestartTask()">Save & Restart</button>
+        <button id="editCloneStartBtn" class="btn-success" onclick="cloneAndStartTask()" style="display: none;">Clone & Start</button>
         <button class="btn-secondary" onclick="closeEditTaskModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Task Type Definition Modal -->
+  <div class="modal" id="taskTypeModal">
+    <div class="modal-content" style="max-width: 700px;">
+      <h3 id="taskTypeModalTitle">Create Task Type</h3>
+      <input type="hidden" id="taskTypeId">
+
+      <label style="color: #aaa; font-size: 0.9em;">Name</label>
+      <input type="text" id="taskTypeName" placeholder="e.g., Deploy PSM to BOE">
+
+      <label style="color: #aaa; font-size: 0.9em;">Description</label>
+      <input type="text" id="taskTypeDescription" placeholder="Optional description">
+
+      <div style="margin-top: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label style="color: #00d9ff; font-size: 0.9em; margin: 0;">Parameters</label>
+          <button class="btn-secondary btn-small" onclick="addTaskTypeParam()">+ Add Parameter</button>
+        </div>
+        <p style="color: #666; font-size: 0.8em; margin: 5px 0;">Define parameters that users will fill in when creating a task.</p>
+        <div id="taskTypeParams" style="margin-top: 10px; max-height: 150px; overflow-y: auto;"></div>
+      </div>
+
+      <div style="margin-top: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label style="color: #00d9ff; font-size: 0.9em; margin: 0;">Subtasks</label>
+          <button class="btn-secondary btn-small" onclick="addTaskTypeSubtask()">+ Add Subtask</button>
+        </div>
+        <p style="color: #666; font-size: 0.8em; margin: 5px 0;">Use ${paramName} to reference parameters.</p>
+        <div id="taskTypeSubtasks" style="margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <button class="btn-primary" onclick="saveTaskType()">Save</button>
+        <button class="btn-secondary" onclick="closeTaskTypeModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Task from Type Modal -->
+  <div class="modal" id="createFromTypeModal">
+    <div class="modal-content">
+      <h3>Create Task from Template</h3>
+      <input type="hidden" id="createFromTypeId">
+      <p id="createFromTypeName" style="color: #00d9ff; margin-bottom: 15px;"></p>
+      <div id="createFromTypeParams"></div>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <button class="btn-primary" onclick="submitCreateFromType()">Create Task</button>
+        <button class="btn-secondary" onclick="closeCreateFromTypeModal()">Cancel</button>
       </div>
     </div>
   </div>
@@ -411,6 +544,7 @@ node mac_cdn_proxy.js</code></pre>
   <script>
     const API = '';
     let currentTaskId = null;
+    window.logsAutoScroll = true; // Auto-scroll logs by default
 
     // Helper function to convert URLs in text to clickable links
     function linkifyUrls(text) {
@@ -424,7 +558,8 @@ node mac_cdn_proxy.js</code></pre>
     let selectedTasks = new Set();
     let allScreenshots = [];
     let screenshotPage = 0;
-    const SCREENSHOTS_PER_PAGE = 8;
+    let screenshotsPerPage = 16; // Adjustable, default 16
+    let selectedSubtaskIndex = null;  // Track selected subtask within a chained task
 
     // Tab switching
     function switchTab(tabName) {
@@ -482,7 +617,24 @@ node mac_cdn_proxy.js</code></pre>
     }
 
     // Task Modal
-    function openCreateTaskModal() {
+    let customTaskTypes = [];
+
+    async function openCreateTaskModal() {
+      // Load custom task types
+      try {
+        const res = await fetch(API + '/api/task-types');
+        customTaskTypes = await res.json();
+        const optgroup = document.getElementById('customTypeOptions');
+        if (customTaskTypes.length > 0) {
+          optgroup.innerHTML = customTaskTypes.map(t =>
+            '<option value="custom_' + t.id + '">' + t.name + '</option>'
+          ).join('');
+        } else {
+          optgroup.innerHTML = '<option disabled>No custom types defined</option>';
+        }
+      } catch (e) {
+        console.error('Failed to load custom task types:', e);
+      }
       document.getElementById('createTaskModal').classList.add('active');
     }
 
@@ -492,15 +644,223 @@ node mac_cdn_proxy.js</code></pre>
 
     function toggleTaskTypeFields() {
       const type = document.getElementById('newTaskType').value;
+      const singleTaskFields = document.getElementById('singleTaskFields');
+      const chainedTaskFields = document.getElementById('chainedTaskFields');
+      const customTypeFields = document.getElementById('customTypeFields');
       const janusFields = document.getElementById('janusOnlyFields');
       const workorderFields = document.getElementById('workorderOnlyFields');
-      if (type === 'workorder') {
-        janusFields.style.display = 'none';
-        workorderFields.style.display = 'block';
+
+      // Hide all first
+      singleTaskFields.style.display = 'none';
+      chainedTaskFields.style.display = 'none';
+      customTypeFields.style.display = 'none';
+
+      if (type.startsWith('custom_')) {
+        // Custom task type
+        const typeId = type.replace('custom_', '');
+        const customType = customTaskTypes.find(t => t.id === typeId);
+        if (customType) {
+          document.getElementById('customTypeName').textContent = customType.name;
+          document.getElementById('customTypeDescription').textContent = customType.description || '';
+
+          // Build parameter inputs
+          const paramsContainer = document.getElementById('customTypeParams');
+          paramsContainer.innerHTML = (customType.parameters || []).map(p =>
+            '<label style="color: #aaa; font-size: 0.9em;">' + p.name + (p.required ? ' *' : '') + '</label>' +
+            '<input type="text" id="customParam_' + p.name + '" placeholder="' + (p.description || p.name) + '">'
+          ).join('');
+
+          customTypeFields.style.display = 'block';
+        }
+      } else if (type === 'chained') {
+        chainedTaskFields.style.display = 'block';
       } else {
-        janusFields.style.display = 'block';
-        workorderFields.style.display = 'none';
+        singleTaskFields.style.display = 'block';
+        if (type === 'workorder') {
+          janusFields.style.display = 'none';
+          workorderFields.style.display = 'block';
+        } else {
+          janusFields.style.display = 'block';
+          workorderFields.style.display = 'none';
+        }
       }
+    }
+
+    // Chained task subtask management
+    let subtaskCounter = 0;
+
+    function addSubtask() {
+      const list = document.getElementById('subtaskList');
+      const id = subtaskCounter++;
+      const div = document.createElement('div');
+      div.id = `subtask_${id}`;
+      div.style.cssText = 'background: #0f3460; padding: 10px; border-radius: 4px; margin-bottom: 8px;';
+      div.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <strong style="color: #00d9ff;">Subtask ${id + 1}</strong>
+          <button class="btn-danger btn-small" onclick="removeSubtask(${id})">Remove</button>
+        </div>
+        <select id="subtask_type_${id}" onchange="toggleSubtaskFields(${id})" style="margin-bottom: 5px;">
+          <option value="janus">Janus Mini Update</option>
+          <option value="workorder">Execute Workorder</option>
+        </select>
+        <input type="text" id="subtask_psm_${id}" placeholder="PSM" style="margin-bottom: 5px;">
+        <input type="text" id="subtask_env_${id}" placeholder="Environment (Lane)" style="margin-bottom: 5px;">
+        <div id="subtask_janus_${id}">
+          <input type="text" id="subtask_idl_branch_${id}" placeholder="IDL Branch" style="margin-bottom: 5px;">
+          <input type="text" id="subtask_idl_version_${id}" placeholder="IDL Version (optional, for downgrade)" style="margin-bottom: 5px;">
+          <input type="text" id="subtask_api_group_id_${id}" placeholder="API Group ID (optional)" style="margin-bottom: 5px;">
+        </div>
+        <div id="subtask_workorder_${id}" style="display: none;">
+          <input type="text" id="subtask_wo_api_group_id_${id}" placeholder="API Group ID (required)">
+        </div>
+      `;
+      list.appendChild(div);
+    }
+
+    function removeSubtask(id) {
+      const div = document.getElementById(`subtask_${id}`);
+      if (div) div.remove();
+    }
+
+    function toggleSubtaskFields(id) {
+      const type = document.getElementById(`subtask_type_${id}`).value;
+      const janusDiv = document.getElementById(`subtask_janus_${id}`);
+      const workorderDiv = document.getElementById(`subtask_workorder_${id}`);
+      if (type === 'workorder') {
+        janusDiv.style.display = 'none';
+        workorderDiv.style.display = 'block';
+      } else {
+        janusDiv.style.display = 'block';
+        workorderDiv.style.display = 'none';
+      }
+    }
+
+    // Edit modal subtask management
+    let editSubtaskCounter = 0;
+
+    function addEditSubtask(subtask = null) {
+      const list = document.getElementById('editSubtaskList');
+      const id = editSubtaskCounter++;
+      const div = document.createElement('div');
+      div.id = `edit_subtask_${id}`;
+      div.style.cssText = 'background: #0f3460; padding: 10px; border-radius: 4px; margin-bottom: 8px;';
+
+      const type = subtask?.type === 'janus_workorder_execute' || subtask?.type === 'workorder' ? 'workorder' : 'janus';
+
+      div.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <strong style="color: #00d9ff;">Subtask ${id + 1}</strong>
+          <button class="btn-danger btn-small" onclick="removeEditSubtask(${id})">Remove</button>
+        </div>
+        <select id="edit_subtask_type_${id}" onchange="toggleEditSubtaskFields(${id})" style="margin-bottom: 5px;">
+          <option value="janus" ${type === 'janus' ? 'selected' : ''}>Janus Mini Update</option>
+          <option value="workorder" ${type === 'workorder' ? 'selected' : ''}>Execute Workorder</option>
+        </select>
+        <input type="text" id="edit_subtask_psm_${id}" placeholder="PSM" value="${subtask?.psm || ''}" style="margin-bottom: 5px;">
+        <input type="text" id="edit_subtask_env_${id}" placeholder="Environment (Lane)" value="${subtask?.env || ''}" style="margin-bottom: 5px;">
+        <div id="edit_subtask_janus_${id}" style="${type === 'workorder' ? 'display: none;' : ''}">
+          <input type="text" id="edit_subtask_idl_branch_${id}" placeholder="IDL Branch" value="${subtask?.idl_branch || ''}" style="margin-bottom: 5px;">
+          <input type="text" id="edit_subtask_idl_version_${id}" placeholder="IDL Version (optional)" value="${subtask?.idl_version || ''}" style="margin-bottom: 5px;">
+          <input type="text" id="edit_subtask_api_group_id_${id}" placeholder="API Group ID (optional)" value="${subtask?.api_group_id || ''}" style="margin-bottom: 5px;">
+        </div>
+        <div id="edit_subtask_workorder_${id}" style="${type === 'workorder' ? '' : 'display: none;'}">
+          <input type="text" id="edit_subtask_wo_api_group_id_${id}" placeholder="API Group ID (required)" value="${subtask?.api_group_id || ''}">
+        </div>
+      `;
+      list.appendChild(div);
+    }
+
+    function removeEditSubtask(id) {
+      const div = document.getElementById(`edit_subtask_${id}`);
+      if (div) div.remove();
+    }
+
+    function toggleEditSubtaskFields(id) {
+      const type = document.getElementById(`edit_subtask_type_${id}`).value;
+      const janusDiv = document.getElementById(`edit_subtask_janus_${id}`);
+      const workorderDiv = document.getElementById(`edit_subtask_workorder_${id}`);
+      if (type === 'workorder') {
+        janusDiv.style.display = 'none';
+        workorderDiv.style.display = 'block';
+      } else {
+        janusDiv.style.display = 'block';
+        workorderDiv.style.display = 'none';
+      }
+    }
+
+    function collectEditSubtasks() {
+      const subtasks = [];
+      const list = document.getElementById('editSubtaskList');
+      const divs = list.querySelectorAll('[id^="edit_subtask_"]');
+
+      for (const div of divs) {
+        const id = div.id.replace('edit_subtask_', '');
+        const type = document.getElementById(`edit_subtask_type_${id}`)?.value;
+        const psm = document.getElementById(`edit_subtask_psm_${id}`)?.value;
+        const env = document.getElementById(`edit_subtask_env_${id}`)?.value;
+
+        if (!type || !psm || !env) continue;
+
+        const subtask = { type, psm, env };
+
+        if (type === 'janus') {
+          subtask.idl_branch = document.getElementById(`edit_subtask_idl_branch_${id}`)?.value;
+          const idlVersion = document.getElementById(`edit_subtask_idl_version_${id}`)?.value;
+          if (idlVersion) subtask.idl_version = idlVersion;
+          const apiGroupId = document.getElementById(`edit_subtask_api_group_id_${id}`)?.value;
+          if (apiGroupId) subtask.api_group_id = apiGroupId;
+        } else if (type === 'workorder') {
+          subtask.api_group_id = document.getElementById(`edit_subtask_wo_api_group_id_${id}`)?.value;
+        }
+
+        subtasks.push(subtask);
+      }
+
+      return subtasks;
+    }
+
+    function collectSubtasks() {
+      // First check if there's JSON in the textarea
+      const jsonText = document.getElementById('subtasksJson').value.trim();
+      if (jsonText) {
+        try {
+          return JSON.parse(jsonText);
+        } catch (e) {
+          alert('Invalid subtasks JSON: ' + e.message);
+          return null;
+        }
+      }
+
+      // Otherwise collect from UI
+      const subtasks = [];
+      const list = document.getElementById('subtaskList');
+      const divs = list.querySelectorAll('[id^="subtask_"]');
+
+      for (const div of divs) {
+        const id = div.id.replace('subtask_', '');
+        const type = document.getElementById(`subtask_type_${id}`)?.value;
+        const psm = document.getElementById(`subtask_psm_${id}`)?.value;
+        const env = document.getElementById(`subtask_env_${id}`)?.value;
+
+        if (!type || !psm || !env) continue;
+
+        const subtask = { type, psm, env };
+
+        if (type === 'janus') {
+          subtask.idl_branch = document.getElementById(`subtask_idl_branch_${id}`)?.value;
+          const idlVersion = document.getElementById(`subtask_idl_version_${id}`)?.value;
+          if (idlVersion) subtask.idl_version = idlVersion;
+          const apiGroupId = document.getElementById(`subtask_api_group_id_${id}`)?.value;
+          if (apiGroupId) subtask.api_group_id = apiGroupId;
+        } else if (type === 'workorder') {
+          subtask.api_group_id = document.getElementById(`subtask_wo_api_group_id_${id}`)?.value;
+        }
+
+        subtasks.push(subtask);
+      }
+
+      return subtasks;
     }
 
     // Import task from JSON
@@ -541,40 +901,84 @@ node mac_cdn_proxy.js</code></pre>
 
     async function createTask() {
       const type = document.getElementById('newTaskType').value;
-      const psm = document.getElementById('newPsm').value;
-      const env = document.getElementById('newEnv').value;
-
-      if (!psm || !env) {
-        alert('PSM and Environment are required');
-        return;
-      }
 
       let endpoint, body;
 
-      if (type === 'workorder') {
-        // Execute Workorder task - needs psm, env, and api_group_id
-        const api_group_id = document.getElementById('newWorkorderApiGroupId').value;
-        if (!api_group_id) {
-          alert('API Group ID is required for Execute Workorder');
+      if (type === 'chained') {
+        // Chained task - use separate endpoint
+        const name = document.getElementById('newChainName').value;
+        const subtasks = collectSubtasks();
+
+        if (!subtasks) return; // Error already shown
+        if (subtasks.length === 0) {
+          alert('At least one subtask is required');
           return;
         }
-        endpoint = '/api/tasks/janus-workorder';
-        body = { psm, env, api_group_id };
-      } else {
-        // Janus Mini Update task
+
+        endpoint = '/api/tasks/chained';
+        body = { name, subtasks };
+
+      } else if (type.startsWith('custom_')) {
+        // Custom task type - use unified API
+        const typeId = type.replace('custom_', '');
+        const customType = customTaskTypes.find(t => t.id === typeId);
+        if (!customType) {
+          alert('Custom task type not found');
+          return;
+        }
+
+        // Collect parameters
+        const parameters = {};
+        for (const p of (customType.parameters || [])) {
+          const input = document.getElementById('customParam_' + p.name);
+          const value = input ? input.value : '';
+          if (p.required && !value) {
+            alert('Parameter "' + p.name + '" is required');
+            return;
+          }
+          if (value) parameters[p.name] = value;
+        }
+
+        endpoint = '/api/tasks';
+        body = { type: typeId, parameters };
+
+      } else if (type === 'janus') {
+        // Janus Mini Update - use unified API
+        const psm = document.getElementById('newPsm').value;
+        const env = document.getElementById('newEnv').value;
         const idl_branch = document.getElementById('newIdlBranch').value;
         const api_group_id = document.getElementById('newApiGroupId').value;
         const idl_version = document.getElementById('newIdlVersion').value;
 
-        if (!idl_branch) {
-          alert('IDL Branch is required for Janus Update');
+        if (!psm || !env || !idl_branch) {
+          alert('PSM, Environment, and IDL Branch are required');
           return;
         }
 
-        endpoint = '/api/tasks/janus';
-        body = { psm, env, idl_branch };
-        if (api_group_id) body.api_group_id = api_group_id;
-        if (idl_version) body.idl_version = idl_version;
+        const parameters = { psm, env, idl_branch };
+        if (api_group_id) parameters.api_group_id = api_group_id;
+        if (idl_version) parameters.idl_version = idl_version;
+
+        endpoint = '/api/tasks';
+        body = { type: 'janus', parameters };
+
+      } else if (type === 'workorder') {
+        // Execute Workorder - use unified API
+        const psm = document.getElementById('newPsm').value;
+        const env = document.getElementById('newEnv').value;
+        const api_group_id = document.getElementById('newWorkorderApiGroupId').value;
+
+        if (!psm || !env || !api_group_id) {
+          alert('PSM, Environment, and API Group ID are required');
+          return;
+        }
+
+        endpoint = '/api/tasks';
+        body = { type: 'workorder', parameters: { psm, env, api_group_id } };
+
+      } else {
+        alert('Unknown task type: ' + type);
+        return;
       }
 
       const res = await fetch(API + endpoint, {
@@ -583,7 +987,13 @@ node mac_cdn_proxy.js</code></pre>
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      alert('Task started: ' + data.taskId);
+
+      if (data.error) {
+        alert('Error: ' + data.error);
+        return;
+      }
+
+      alert('Task started: ' + data.taskId + (data.subtaskCount ? ' (' + data.subtaskCount + ' subtasks)' : ''));
       closeCreateTaskModal();
       refreshTasks();
       selectTask(data.taskId);
@@ -592,25 +1002,72 @@ node mac_cdn_proxy.js</code></pre>
     let runningTaskId = null;
 
     // Edit Task Modal
-    async function openEditTaskModal(taskId) {
+    async function openEditTaskModal(taskId, cloneMode = false) {
       const res = await fetch(API + '/api/tasks/' + taskId);
       const task = await res.json();
 
-      document.getElementById('editTaskId').value = taskId;
-      document.getElementById('editTaskIdDisplay').textContent = '(' + taskId + ')';
+      window.editCloneMode = cloneMode;
+      document.getElementById('editTaskId').value = cloneMode ? '' : taskId;
+      document.getElementById('editTaskIdDisplay').textContent = cloneMode ? '(Clone)' : '(' + taskId + ')';
       document.getElementById('editTaskType').value = task.type || 'janus';
-      document.getElementById('editPsm').value = task.psm || '';
-      document.getElementById('editEnv').value = task.env || '';
-      document.getElementById('editIdlBranch').value = task.idl_branch || '';
-      document.getElementById('editIdlVersion').value = task.idl_version || '';
-      document.getElementById('editApiGroupId').value = task.api_group_id || '';
 
-      // Show/hide Janus-only fields based on task type
-      const janusFields = document.getElementById('editJanusFields');
-      if (task.type === 'janus_workorder_execute') {
-        janusFields.style.display = 'none';
+      // Update modal title and buttons based on mode
+      const modalTitle = document.querySelector('#editTaskModal h2');
+      const saveBtn = document.getElementById('editSaveBtn');
+      const saveRestartBtn = document.getElementById('editSaveRestartBtn');
+      const cloneStartBtn = document.getElementById('editCloneStartBtn');
+
+      if (cloneMode) {
+        if (modalTitle) modalTitle.textContent = 'Clone Task';
+        if (saveBtn) saveBtn.textContent = 'Create Clone';
+        if (saveRestartBtn) saveRestartBtn.style.display = 'none';
+        if (cloneStartBtn) cloneStartBtn.style.display = 'inline-block';
       } else {
-        janusFields.style.display = 'block';
+        if (modalTitle) modalTitle.textContent = 'Edit Task';
+        if (saveBtn) saveBtn.textContent = 'Save';
+        if (saveRestartBtn) saveRestartBtn.style.display = 'inline-block';
+        if (cloneStartBtn) cloneStartBtn.style.display = 'none';
+      }
+      // Track if task has subtasks (chained task)
+      window.editTaskHasSubtasks = !!task.subtasks;
+
+      const nonChainedFields = document.getElementById('editNonChainedFields');
+      const chainedFields = document.getElementById('editChainedFields');
+      const janusFields = document.getElementById('editJanusFields');
+
+      if (task.subtasks) {
+        // Show chained task fields (task has subtasks)
+        nonChainedFields.style.display = 'none';
+        chainedFields.style.display = 'block';
+
+        // Set chain name
+        document.getElementById('editChainName').value = task.name || '';
+
+        // Clear and populate subtask list
+        document.getElementById('editSubtaskList').innerHTML = '';
+        editSubtaskCounter = 0;
+        if (task.subtasks.length > 0) {
+          for (const subtask of task.subtasks) {
+            addEditSubtask(subtask);
+          }
+        }
+      } else {
+        // Show non-chained task fields
+        nonChainedFields.style.display = 'block';
+        chainedFields.style.display = 'none';
+
+        document.getElementById('editPsm').value = task.psm || '';
+        document.getElementById('editEnv').value = task.env || '';
+        document.getElementById('editIdlBranch').value = task.idl_branch || '';
+        document.getElementById('editIdlVersion').value = task.idl_version || '';
+        document.getElementById('editApiGroupId').value = task.api_group_id || '';
+
+        // Show/hide Janus-only fields based on task type
+        if (task.type === 'janus_workorder_execute') {
+          janusFields.style.display = 'none';
+        } else {
+          janusFields.style.display = 'block';
+        }
       }
 
       document.getElementById('editTaskModal').classList.add('active');
@@ -622,45 +1079,164 @@ node mac_cdn_proxy.js</code></pre>
 
     async function saveTaskEdit() {
       const taskId = document.getElementById('editTaskId').value;
-      const updates = {
-        psm: document.getElementById('editPsm').value,
-        env: document.getElementById('editEnv').value,
-        idl_branch: document.getElementById('editIdlBranch').value,
-        idl_version: document.getElementById('editIdlVersion').value || null,
-        api_group_id: document.getElementById('editApiGroupId').value || null
+      const taskType = document.getElementById('editTaskType').value;
+      let updates;
+
+      if (window.editTaskHasSubtasks) {
+        const subtasks = collectEditSubtasks();
+        if (subtasks.length === 0) {
+          alert('At least one subtask is required');
+          return;
+        }
+        updates = {
+          name: document.getElementById('editChainName').value,
+          subtasks: subtasks
+        };
+      } else {
+        updates = {
+          psm: document.getElementById('editPsm').value,
+          env: document.getElementById('editEnv').value,
+          idl_branch: document.getElementById('editIdlBranch').value,
+          idl_version: document.getElementById('editIdlVersion').value || null,
+          api_group_id: document.getElementById('editApiGroupId').value || null
+        };
+      }
+
+      try {
+        let res, data;
+
+        if (window.editCloneMode) {
+          // Clone mode: create a new chained task
+          const chainedTask = {
+            type: taskType,
+            name: updates.name || taskType,
+            subtasks: updates.subtasks || [{
+              type: 'janus',
+              ...updates
+            }]
+          };
+          res = await fetch(API + '/api/tasks/chained', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(chainedTask)
+          });
+          data = await res.json();
+          if (data.id) {
+            alert('Task cloned: ' + data.id);
+            closeEditTaskModal();
+            refreshTasks();
+            selectTask(data.id);
+          } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+          }
+        } else {
+          // Edit mode: update existing task
+          res = await fetch(API + '/api/tasks/' + taskId, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+          });
+          data = await res.json();
+          if (data.success) {
+            alert('Task updated');
+            closeEditTaskModal();
+            refreshTasks();
+            if (currentTaskId === taskId) {
+              updateTaskDetails();
+            }
+          } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+          }
+        }
+      } catch (e) {
+        alert('Error ' + (window.editCloneMode ? 'cloning' : 'updating') + ' task: ' + e.message);
+      }
+    }
+
+    async function cloneAndStartTask() {
+      const taskType = document.getElementById('editTaskType').value;
+
+      if (!window.editTaskHasSubtasks) {
+        alert('Clone & Start is only available for chained tasks');
+        return;
+      }
+
+      const subtasks = collectEditSubtasks();
+      if (subtasks.length === 0) {
+        alert('At least one subtask is required');
+        return;
+      }
+
+      const chainedTask = {
+        type: taskType,
+        name: document.getElementById('editChainName').value || taskType,
+        subtasks: subtasks
       };
 
       try {
-        const res = await fetch(API + '/api/tasks/' + taskId, {
-          method: 'PATCH',
+        // Create the cloned task
+        const res = await fetch(API + '/api/tasks/chained', {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updates)
+          body: JSON.stringify(chainedTask)
         });
         const data = await res.json();
-        if (data.success) {
-          alert('Task updated');
+
+        if (data.id) {
           closeEditTaskModal();
-          refreshTasks();
-          if (currentTaskId === taskId) {
-            updateTaskDetails();
+          // Start the cloned task
+          const startRes = await fetch(API + '/api/tasks/' + data.id + '/restart', { method: 'POST' });
+          const startData = await startRes.json();
+          if (startData.status === 'restarted') {
+            alert('Task cloned and started: ' + data.id);
+            refreshTasks();
+            selectTask(data.id);
+          } else {
+            alert('Task cloned but failed to start: ' + (startData.error || 'Unknown error'));
+            refreshTasks();
           }
         } else {
-          alert('Error: ' + (data.error || 'Unknown error'));
+          alert('Error cloning task: ' + (data.error || 'Unknown error'));
         }
       } catch (e) {
-        alert('Error updating task: ' + e.message);
+        alert('Error cloning task: ' + e.message);
       }
     }
 
     async function saveAndRestartTask() {
+      // If in clone mode, redirect to cloneAndStartTask
+      if (window.editCloneMode) {
+        return cloneAndStartTask();
+      }
+
       const taskId = document.getElementById('editTaskId').value;
-      const updates = {
-        psm: document.getElementById('editPsm').value,
-        env: document.getElementById('editEnv').value,
-        idl_branch: document.getElementById('editIdlBranch').value,
-        idl_version: document.getElementById('editIdlVersion').value || null,
-        api_group_id: document.getElementById('editApiGroupId').value || null
-      };
+      if (!taskId) {
+        alert('No task ID - cannot restart');
+        return;
+      }
+
+      const taskType = document.getElementById('editTaskType').value;
+      let updates;
+
+      if (window.editTaskHasSubtasks) {
+        const subtasks = collectEditSubtasks();
+        if (subtasks.length === 0) {
+          alert('At least one subtask is required');
+          return;
+        }
+        updates = {
+          name: document.getElementById('editChainName').value,
+          subtasks: subtasks
+        };
+      } else {
+        updates = {
+          psm: document.getElementById('editPsm').value,
+          env: document.getElementById('editEnv').value,
+          idl_branch: document.getElementById('editIdlBranch').value,
+          idl_version: document.getElementById('editIdlVersion').value || null,
+          api_group_id: document.getElementById('editApiGroupId').value || null
+        };
+      }
 
       try {
         const res = await fetch(API + '/api/tasks/' + taskId + '/restart', {
@@ -699,15 +1275,17 @@ node mac_cdn_proxy.js</code></pre>
         document.getElementById('stopTaskSection').style.display = 'none';
       }
 
-      tbody.innerHTML = tasks.map(t => `
+      tbody.innerHTML = tasks.map(t => {
+        // Main task row
+        let html = `
         <tr onclick="selectTask('${t.id}')" class="${currentTaskId === t.id ? 'selected' : ''}">
           <td class="checkbox-col" onclick="event.stopPropagation()">
             <input type="checkbox" ${selectedTasks.has(t.id) ? 'checked' : ''} onchange="toggleTaskSelection('${t.id}', this.checked)">
           </td>
           <td style="font-size: 0.8em; color: #aaa;">${t.id}</td>
-          <td>${t.type}</td>
-          <td>${t.psm || '-'}</td>
-          <td>${t.env || '-'}</td>
+          <td>${t.type}${t.subtasks ? ' (' + t.subtasks.length + ')' : ''}</td>
+          <td>${t.subtasks ? (t.name || '-') : (t.psm || '-')}</td>
+          <td>${t.subtasks ? '-' : (t.env || '-')}</td>
           <td>${t.idl_branch || '-'}</td>
           <td><span class="status status-${t.status}">${t.status}</span></td>
           <td style="color: #00d9ff; font-size: 0.9em;">${t.stage || '-'}</td>
@@ -717,11 +1295,35 @@ node mac_cdn_proxy.js</code></pre>
               `<button class="btn-danger btn-small" onclick="stopTask('${t.id}')">Stop</button>` :
               `<button class="btn-secondary btn-small" onclick="openEditTaskModal('${t.id}')" style="margin-right: 5px;">Edit</button>
                <button class="btn-success btn-small" onclick="restartTask('${t.id}')" style="margin-right: 5px;">Restart</button>
+               <button class="btn-primary btn-small" onclick="cloneTask('${t.id}')" style="margin-right: 5px;">Clone</button>
                <button class="btn-danger btn-small" onclick="deleteTask('${t.id}')">Delete</button>`
             }
           </td>
-        </tr>
-      `).join('');
+        </tr>`;
+
+        // Add subtask rows for chained tasks (tasks with subtasks array)
+        if (t.subtasks && t.subtasks.length > 0) {
+          t.subtasks.forEach((st, i) => {
+            const stType = st.type === 'janus_mini_update' ? 'janus' : st.type === 'janus_workorder_execute' ? 'workorder' : st.type;
+            const isSelectedSubtask = currentTaskId === t.id && selectedSubtaskIndex === i;
+            html += `
+            <tr onclick="selectSubtask('${t.id}', ${i})" style="background: ${isSelectedSubtask ? '#1a3a5c' : '#0d1b2a'}; ${isSelectedSubtask ? 'border: 1px solid #00d9ff;' : ''}">
+              <td></td>
+              <td style="font-size: 0.8em; color: #666; padding-left: 20px;">↳ ${i + 1}</td>
+              <td style="color: #888;">${stType}</td>
+              <td style="color: #888;">${st.psm || '-'}</td>
+              <td style="color: #888;">${st.env || '-'}</td>
+              <td style="color: #888;">${st.idl_branch || '-'}</td>
+              <td><span class="status status-${st.status || 'pending'}" style="font-size: 0.75em;">${st.status || 'pending'}</span></td>
+              <td style="color: #666; font-size: 0.85em;">${st.error ? st.error.substring(0, 30) + '...' : '-'}</td>
+              <td style="color: #666; font-size: 0.85em;">${st.startTime ? new Date(st.startTime).toLocaleTimeString() : '-'}</td>
+              <td></td>
+            </tr>`;
+          });
+        }
+
+        return html;
+      }).join('');
 
       updateDeleteSelectedButton();
     }
@@ -756,6 +1358,31 @@ node mac_cdn_proxy.js</code></pre>
         }
       } catch (e) {
         alert('Error restarting task: ' + e.message);
+      }
+    }
+
+    async function cloneTask(taskId) {
+      try {
+        const res = await fetch(API + '/api/tasks/' + taskId);
+        const task = await res.json();
+
+        // Check if it's a chained/custom task type
+        if (task.isChained || task.subtasks) {
+          // Open edit modal with cloned task data
+          openEditTaskModal(taskId, true); // true = clone mode
+        } else {
+          // Clone as regular janus_mini task - open janus tab with pre-filled values
+          document.getElementById('taskPsm').value = task.psm || '';
+          document.getElementById('taskEnv').value = task.env || '';
+          document.getElementById('taskIdlBranch').value = task.idl_branch || '';
+          document.getElementById('taskIdlVersion').value = task.idl_version || '';
+          document.getElementById('taskApiGroupId').value = task.api_group_id || '';
+          document.getElementById('taskDryRun').checked = task.dry_run || false;
+          openTab('janus');
+          alert('Task parameters loaded. Modify if needed and submit.');
+        }
+      } catch (e) {
+        alert('Error cloning task: ' + e.message);
       }
     }
 
@@ -797,9 +1424,85 @@ node mac_cdn_proxy.js</code></pre>
     }
 
     function updateDeleteSelectedButton() {
-      const btn = document.getElementById('deleteSelectedBtn');
-      btn.style.display = selectedTasks.size > 0 ? 'inline-block' : 'none';
-      btn.textContent = `Delete Selected (${selectedTasks.size})`;
+      const deleteBtn = document.getElementById('deleteSelectedBtn');
+      const chainBtn = document.getElementById('chainSelectedBtn');
+      deleteBtn.style.display = selectedTasks.size > 0 ? 'inline-block' : 'none';
+      deleteBtn.textContent = `Delete Selected (${selectedTasks.size})`;
+      // Show chain button only when 2+ tasks are selected
+      chainBtn.style.display = selectedTasks.size >= 2 ? 'inline-block' : 'none';
+      chainBtn.textContent = `Chain Selected (${selectedTasks.size})`;
+    }
+
+    async function chainSelectedTasks() {
+      if (selectedTasks.size < 2) {
+        alert('Select at least 2 tasks to chain');
+        return;
+      }
+
+      // Fetch details of all selected tasks
+      const subtasks = [];
+      for (const taskId of selectedTasks) {
+        try {
+          const res = await fetch(API + '/api/tasks/' + taskId);
+          const task = await res.json();
+
+          // Skip chained tasks - can't nest chains
+          if (task.subtasks) {
+            alert('Task ' + taskId + ' is a chained task and cannot be included. Skipping.');
+            continue;
+          }
+
+          // Build subtask from task parameters
+          const subtask = {
+            type: task.type === 'janus_mini_update' ? 'janus' : 'workorder',
+            psm: task.psm,
+            env: task.env
+          };
+
+          if (task.type === 'janus_mini_update') {
+            subtask.idl_branch = task.idl_branch;
+            if (task.idl_version) subtask.idl_version = task.idl_version;
+            if (task.api_group_id) subtask.api_group_id = task.api_group_id;
+          } else {
+            subtask.api_group_id = task.api_group_id;
+          }
+
+          subtasks.push(subtask);
+        } catch (e) {
+          console.error(`Failed to fetch task ${taskId}:`, e);
+        }
+      }
+
+      if (subtasks.length < 2) {
+        alert('Need at least 2 valid tasks to create a chain');
+        return;
+      }
+
+      // Create chained task
+      const name = prompt('Enter a name for the chained task:', `Chain of ${subtasks.length} tasks`);
+      if (name === null) return; // User cancelled
+
+      try {
+        const res = await fetch(API + '/api/tasks/chained', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name || `Chain of ${subtasks.length} tasks`, subtasks })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+
+        alert(`Chained task created: ${data.taskId} (${data.subtaskCount} subtasks)`);
+        selectedTasks.clear();
+        document.getElementById('selectAll').checked = false;
+        refreshTasks();
+        selectTask(data.taskId);
+      } catch (e) {
+        alert('Error creating chained task: ' + e.message);
+      }
     }
 
     async function deleteTask(taskId) {
@@ -828,6 +1531,26 @@ node mac_cdn_proxy.js</code></pre>
 
     async function selectTask(taskId) {
       currentTaskId = taskId;
+      selectedSubtaskIndex = null;  // Reset subtask selection when selecting main task
+      document.getElementById('taskDetails').style.display = 'block';
+      screenshotPage = 0;
+      await updateTaskDetails();
+      refreshTasks();
+
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(async () => {
+        const res = await fetch(API + '/api/tasks/' + taskId);
+        const task = await res.json();
+        if (task.status !== 'running') {
+          clearInterval(pollInterval);
+        }
+        await updateTaskDetails();
+      }, 2000);
+    }
+
+    async function selectSubtask(taskId, subtaskIndex) {
+      currentTaskId = taskId;
+      selectedSubtaskIndex = subtaskIndex;
       document.getElementById('taskDetails').style.display = 'block';
       screenshotPage = 0;
       await updateTaskDetails();
@@ -850,70 +1573,174 @@ node mac_cdn_proxy.js</code></pre>
       const res = await fetch(API + '/api/tasks/' + currentTaskId);
       const task = await res.json();
 
+      // Check if we're viewing a subtask (task has subtasks array)
+      const isSubtaskView = task.subtasks && selectedSubtaskIndex !== null && task.subtasks[selectedSubtaskIndex];
+      const subtask = isSubtaskView ? task.subtasks[selectedSubtaskIndex] : null;
+
       // Build task config JSON for copy/create
-      const taskConfig = {
-        type: task.type === 'janus_mini_update' ? 'janus' : 'workorder',
-        psm: task.psm,
-        env: task.env
-      };
-      if (task.type === 'janus_mini_update') {
-        taskConfig.idl_branch = task.idl_branch;
-        if (task.idl_version) taskConfig.idl_version = task.idl_version;
-        if (task.api_group_id) taskConfig.api_group_id = task.api_group_id;
+      let taskConfig;
+      let subtasksHtml = '';
+      let displayTask = subtask || task;  // Use subtask data if viewing subtask
+
+      if (isSubtaskView) {
+        // Subtask config
+        const stType = subtask.type === 'janus_mini_update' ? 'janus' : subtask.type === 'janus_workorder_execute' ? 'workorder' : subtask.type;
+        taskConfig = {
+          type: stType,
+          psm: subtask.psm,
+          env: subtask.env,
+          ...(subtask.idl_branch ? { idl_branch: subtask.idl_branch } : {}),
+          ...(subtask.idl_version ? { idl_version: subtask.idl_version } : {}),
+          ...(subtask.api_group_id ? { api_group_id: subtask.api_group_id } : {})
+        };
+      } else if (task.subtasks) {
+        // Chained task config
+        taskConfig = {
+          type: task.type,
+          name: task.name,
+          subtasks: (task.subtasks || []).map(st => ({
+            type: st.type === 'janus_mini_update' ? 'janus' : st.type === 'janus_workorder_execute' ? 'workorder' : st.type,
+            psm: st.psm,
+            env: st.env,
+            ...(st.idl_branch ? { idl_branch: st.idl_branch } : {}),
+            ...(st.api_group_id ? { api_group_id: st.api_group_id } : {})
+          }))
+        };
+
+        // Build subtasks display with click handlers
+        subtasksHtml = `
+          <div style="margin-top: 15px;">
+            <strong style="color: #00d9ff;">Subtasks (${task.subtasks?.length || 0})</strong>
+            <div style="margin-top: 8px;">
+              ${(task.subtasks || []).map((st, i) => `
+                <div onclick="selectSubtask('${task.id}', ${i})" style="background: #0f3460; padding: 8px 12px; border-radius: 4px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;">
+                  <div>
+                    <span style="color: #00d9ff;">${i + 1}.</span>
+                    <span style="color: #aaa;">${st.type === 'janus_mini_update' || st.type === 'janus' ? 'Janus' : 'Workorder'}</span>
+                    <span style="color: #888; margin-left: 8px;">${st.psm} / ${st.env}</span>
+                  </div>
+                  <span class="status status-${st.status || 'pending'}">${st.status || 'pending'}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
       } else {
-        taskConfig.api_group_id = task.api_group_id;
+        taskConfig = {
+          type: task.type === 'janus_mini_update' ? 'janus' : 'workorder',
+          psm: task.psm,
+          env: task.env
+        };
+        if (task.type === 'janus_mini_update') {
+          taskConfig.idl_branch = task.idl_branch;
+          if (task.idl_version) taskConfig.idl_version = task.idl_version;
+          if (task.api_group_id) taskConfig.api_group_id = task.api_group_id;
+        } else {
+          taskConfig.api_group_id = task.api_group_id;
+        }
       }
 
-      document.getElementById('taskInfo').innerHTML = `
-        <p><strong>ID:</strong> ${task.id}</p>
-        <p><strong>Type:</strong> ${task.type}</p>
-        <p><strong>PSM:</strong> ${task.psm || '-'}</p>
-        <p><strong>Env:</strong> ${task.env || '-'}</p>
-        <p><strong>IDL Branch:</strong> ${task.idl_branch || '-'}</p>
-        <p><strong>IDL Version:</strong> ${task.idl_version || '-'}</p>
-        <p><strong>API Group ID:</strong> ${task.api_group_id || '-'}</p>
-        <p><strong>Status:</strong> <span class="status status-${task.status}">${task.status}</span></p>
-        <p><strong>Stage:</strong> <span style="color: #00d9ff;">${task.stage || '-'}</span></p>
-        <p><strong>Started:</strong> ${task.startTime ? new Date(task.startTime).toLocaleString() : '-'}</p>
-        ${task.endTime ? '<p><strong>Ended:</strong> ' + new Date(task.endTime).toLocaleString() + '</p>' : ''}
-        ${task.error ? '<p style="color: #e94560;"><strong>Error:</strong> ' + task.error + '</p>' : ''}
-        ${task.result ? '<p style="color: #00bf63;"><strong>Result:</strong> ' + task.result + '</p>' : ''}
+      // Build info display
+      let infoHtml;
+      if (isSubtaskView) {
+        const stType = subtask.type === 'janus_mini_update' ? 'Janus Mini Update' : subtask.type === 'janus_workorder_execute' ? 'Execute Workorder' : subtask.type;
+        infoHtml = `
+          <p style="color: #ffc107; margin-bottom: 10px;">
+            <strong>Viewing Subtask ${selectedSubtaskIndex + 1} of ${task.subtasks.length}</strong>
+            <button class="btn-secondary btn-small" onclick="selectTask('${task.id}')" style="margin-left: 10px;">← Back to Chain</button>
+          </p>
+          <p><strong>Parent Chain:</strong> ${task.name || task.id}</p>
+          <p><strong>Type:</strong> ${stType}</p>
+          <p><strong>PSM:</strong> ${subtask.psm || '-'}</p>
+          <p><strong>Env:</strong> ${subtask.env || '-'}</p>
+          <p><strong>IDL Branch:</strong> ${subtask.idl_branch || '-'}</p>
+          <p><strong>IDL Version:</strong> ${subtask.idl_version || '-'}</p>
+          <p><strong>API Group ID:</strong> ${subtask.api_group_id || '-'}</p>
+          <p><strong>Status:</strong> <span class="status status-${subtask.status || 'pending'}">${subtask.status || 'pending'}</span></p>
+          <p><strong>Stage:</strong> <span style="color: #00d9ff;">${subtask.stage || '-'}</span></p>
+          <p><strong>Started:</strong> ${subtask.startTime ? new Date(subtask.startTime).toLocaleString() : '-'}</p>
+          ${subtask.endTime ? '<p><strong>Ended:</strong> ' + new Date(subtask.endTime).toLocaleString() + '</p>' : ''}
+          ${subtask.error ? '<p style="color: #e94560;"><strong>Error:</strong> ' + subtask.error + '</p>' : ''}
+          ${subtask.result ? '<p style="color: #00bf63;"><strong>Result:</strong> ' + subtask.result + '</p>' : ''}
+        `;
+      } else {
+        infoHtml = `
+          <p><strong>ID:</strong> ${task.id}</p>
+          <p><strong>Type:</strong> ${task.type}</p>
+          ${task.subtasks ? '<p><strong>Name:</strong> ' + (task.name || '-') + '</p>' : ''}
+          ${!task.subtasks ? `
+            <p><strong>PSM:</strong> ${task.psm || '-'}</p>
+            <p><strong>Env:</strong> ${task.env || '-'}</p>
+            <p><strong>IDL Branch:</strong> ${task.idl_branch || '-'}</p>
+            <p><strong>IDL Version:</strong> ${task.idl_version || '-'}</p>
+            <p><strong>API Group ID:</strong> ${task.api_group_id || '-'}</p>
+          ` : ''}
+          <p><strong>Status:</strong> <span class="status status-${task.status}">${task.status}</span></p>
+          <p><strong>Stage:</strong> <span style="color: #00d9ff;">${task.stage || '-'}</span></p>
+          <p><strong>Started:</strong> ${task.startTime ? new Date(task.startTime).toLocaleString() : '-'}</p>
+          ${task.endTime ? '<p><strong>Ended:</strong> ' + new Date(task.endTime).toLocaleString() + '</p>' : ''}
+          ${task.error ? '<p style="color: #e94560;"><strong>Error:</strong> ' + task.error + '</p>' : ''}
+          ${task.result ? '<p style="color: #00bf63;"><strong>Result:</strong> ' + task.result + '</p>' : ''}
+          ${subtasksHtml}
+        `;
+      }
+
+      document.getElementById('taskInfo').innerHTML = infoHtml + `
         <div style="margin-top: 15px; background: #0d1b2a; padding: 10px; border-radius: 4px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <strong style="color: #00d9ff;">Task Config (JSON)</strong>
+            <strong style="color: #00d9ff;">${isSubtaskView ? 'Subtask' : 'Task'} Config (JSON)</strong>
             <button class="btn-secondary btn-small" onclick="copyTaskJson()">Copy JSON</button>
           </div>
           <pre id="taskJsonConfig" style="margin: 0; font-size: 0.85em; white-space: pre-wrap; color: #aaa;">${JSON.stringify(taskConfig, null, 2)}</pre>
         </div>
       `;
 
+      // Use subtask logs if viewing subtask, otherwise use task logs
+      const logs = isSubtaskView ? (subtask.logs || []) : (task.logs || []);
       const logsEl = document.getElementById('taskLogs');
-      logsEl.innerHTML = linkifyUrls((task.logs || []).join('\n'));
-      logsEl.scrollTop = logsEl.scrollHeight; // Auto-scroll to bottom
+      logsEl.innerHTML = linkifyUrls(logs.join('\n'));
+      // Auto-scroll to bottom if checkbox is checked
+      if (window.logsAutoScroll !== false) {
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
 
-      // Fetch screenshots
-      const ssRes = await fetch(API + '/api/tasks/' + currentTaskId + '/screenshots');
-      allScreenshots = await ssRes.json();
+      // Fetch screenshots - for subtasks, use the subtask's temp task ID
+      currentScreenshotTaskId = currentTaskId;
+      if (isSubtaskView) {
+        // Subtask screenshots are stored with temp ID: parentTaskId_subN
+        currentScreenshotTaskId = currentTaskId + '_sub' + selectedSubtaskIndex;
+      }
+      const ssRes = await fetch(API + '/api/tasks/' + currentScreenshotTaskId + '/screenshots');
+      let taskScreenshots = await ssRes.json();
+
+      // Use all screenshots from the fetched task
+      allScreenshots = Array.isArray(taskScreenshots) ? taskScreenshots : [];
       renderScreenshots();
     }
 
+    // Track which task ID to use for screenshots (may be subtask temp ID)
+    let currentScreenshotTaskId = null;
+
     function renderScreenshots() {
-      const totalPages = Math.ceil(allScreenshots.length / SCREENSHOTS_PER_PAGE);
-      const start = screenshotPage * SCREENSHOTS_PER_PAGE;
-      const end = start + SCREENSHOTS_PER_PAGE;
+      const totalPages = Math.ceil(allScreenshots.length / screenshotsPerPage);
+      const start = screenshotPage * screenshotsPerPage;
+      const end = start + screenshotsPerPage;
       const pageScreenshots = allScreenshots.slice(start, end);
 
-      document.getElementById('taskScreenshots').innerHTML = pageScreenshots.map((ss, i) => `
-        <div class="screenshot-item" onclick="showImage('/api/tasks/${currentTaskId}/screenshots/${start + i}')">
-          <img src="/api/tasks/${currentTaskId}/screenshots/${start + i}" loading="lazy">
-          <div class="label">${ss.label}</div>
-        </div>
-      `).join('');
+      // Use the correct task ID for screenshot URLs
+      const ssTaskId = currentScreenshotTaskId || currentTaskId;
+
+      document.getElementById('taskScreenshots').innerHTML = pageScreenshots.map((ss, i) => {
+        return '<div class="screenshot-item" onclick="showImage(\'/api/tasks/' + ssTaskId + '/screenshots/' + (start + i) + '\')">' +
+          '<img src="/api/tasks/' + ssTaskId + '/screenshots/' + (start + i) + '" loading="lazy">' +
+          '<div class="label">' + ss.label + '</div>' +
+        '</div>';
+      }).join('');
 
       const pagination = document.getElementById('screenshotPagination');
-      if (allScreenshots.length > SCREENSHOTS_PER_PAGE) {
+      if (allScreenshots.length > screenshotsPerPage) {
         pagination.style.display = 'flex';
-        document.getElementById('screenshotPageInfo').textContent = `Page ${screenshotPage + 1} of ${totalPages}`;
+        document.getElementById('screenshotPageInfo').textContent = 'Page ' + (screenshotPage + 1) + ' of ' + totalPages;
       } else {
         pagination.style.display = 'none';
       }
@@ -927,11 +1754,17 @@ node mac_cdn_proxy.js</code></pre>
     }
 
     function nextScreenshotPage() {
-      const totalPages = Math.ceil(allScreenshots.length / SCREENSHOTS_PER_PAGE);
+      const totalPages = Math.ceil(allScreenshots.length / screenshotsPerPage);
       if (screenshotPage < totalPages - 1) {
         screenshotPage++;
         renderScreenshots();
       }
+    }
+
+    function changeScreenshotsPerPage(value) {
+      screenshotsPerPage = parseInt(value, 10);
+      screenshotPage = 0; // Reset to first page
+      renderScreenshots();
     }
 
     function showImage(src) {
@@ -999,6 +1832,435 @@ node mac_cdn_proxy.js</code></pre>
     document.getElementById('editTaskModal').addEventListener('click', function(e) {
       if (e.target === this) closeEditTaskModal();
     });
+    document.getElementById('taskTypeModal').addEventListener('click', function(e) {
+      if (e.target === this) closeTaskTypeModal();
+    });
+    document.getElementById('createFromTypeModal').addEventListener('click', function(e) {
+      if (e.target === this) closeCreateFromTypeModal();
+    });
+
+    // ============ Task Type Management ============
+    let taskTypeParamCounter = 0;
+    let taskTypeSubtaskCounter = 0;
+
+    async function refreshTaskTypes() {
+      try {
+        const res = await fetch(API + '/api/task-types');
+        const types = await res.json();
+        const container = document.getElementById('taskTypesList');
+
+        if (types.length === 0) {
+          container.innerHTML = '<p style="color: #666;">No custom task types defined. Create one to get started!</p>';
+          return;
+        }
+
+        container.innerHTML = types.map(t => {
+          const paramNames = (t.parameters || []).map(p => '<span style="color: #ffc107;">' + p.name + (p.required ? '*' : '') + '</span>').join(', ');
+          const subtaskSummary = (t.subtasks || []).map((st, i) => {
+            const type = st.type === 'janus' ? 'Janus' : st.type === 'workorder' ? 'Workorder' : st.type;
+            const mappings = [];
+            const taskTypeDef = builtInTaskTypes[st.type];
+            if (taskTypeDef) {
+              taskTypeDef.params.forEach(function(param) {
+                if (st[param.key] && st[param.key].includes('$')) mappings.push(param.key);
+              });
+            }
+            return '<div style="font-size: 0.8em; color: #888; margin-top: 3px;">' + (i+1) + '. ' + type + ' → ' + (mappings.length > 0 ? mappings.join(', ') : 'no mappings') + '</div>';
+          }).join('');
+
+          return '<div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 10px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: flex-start;">' +
+              '<div style="flex: 1;">' +
+                '<h4 style="color: #00d9ff; margin-bottom: 5px;">' + t.name + '</h4>' +
+                '<p style="color: #888; font-size: 0.85em; margin-bottom: 8px;">' + (t.description || 'No description') + '</p>' +
+                '<div style="margin-bottom: 8px;">' +
+                  '<span style="color: #aaa; font-size: 0.85em;">Parameters: ' + (paramNames || '<span style="color: #666;">None</span>') + '</span>' +
+                '</div>' +
+                '<div style="background: #0d1b2a; padding: 8px; border-radius: 4px;">' +
+                  '<strong style="color: #666; font-size: 0.8em;">Subtasks (' + (t.subtasks || []).length + '):</strong>' +
+                  subtaskSummary +
+                '</div>' +
+              '</div>' +
+              '<div style="display: flex; gap: 5px; margin-left: 10px;">' +
+                '<button class="btn-primary btn-small" onclick="openCreateFromTypeModal(\'' + t.id + '\')">Use</button>' +
+                '<button class="btn-secondary btn-small" onclick="openEditTaskTypeModal(\'' + t.id + '\')">Edit</button>' +
+                '<button class="btn-danger btn-small" onclick="deleteTaskType(\'' + t.id + '\')">Delete</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+      } catch (e) {
+        document.getElementById('taskTypesList').innerHTML = '<p style="color: #e94560;">Error loading task types: ' + e.message + '</p>';
+      }
+    }
+
+    function openCreateTaskTypeModal() {
+      document.getElementById('taskTypeModalTitle').textContent = 'Create Task Type';
+      document.getElementById('taskTypeId').value = '';
+      document.getElementById('taskTypeName').value = '';
+      document.getElementById('taskTypeDescription').value = '';
+      document.getElementById('taskTypeParams').innerHTML = '';
+      document.getElementById('taskTypeSubtasks').innerHTML = '';
+      taskTypeParamCounter = 0;
+      taskTypeSubtaskCounter = 0;
+      document.getElementById('taskTypeModal').classList.add('active');
+    }
+
+    async function openEditTaskTypeModal(typeId) {
+      try {
+        const res = await fetch(API + '/api/task-types/' + typeId);
+        const t = await res.json();
+
+        document.getElementById('taskTypeModalTitle').textContent = 'Edit Task Type';
+        document.getElementById('taskTypeId').value = typeId;
+        document.getElementById('taskTypeName').value = t.name || '';
+        document.getElementById('taskTypeDescription').value = t.description || '';
+
+        // Load parameters
+        document.getElementById('taskTypeParams').innerHTML = '';
+        taskTypeParamCounter = 0;
+        for (const param of (t.parameters || [])) {
+          addTaskTypeParam(param);
+        }
+
+        // Load subtasks
+        document.getElementById('taskTypeSubtasks').innerHTML = '';
+        taskTypeSubtaskCounter = 0;
+        for (const st of (t.subtasks || [])) {
+          addTaskTypeSubtask(st);
+        }
+
+        document.getElementById('taskTypeModal').classList.add('active');
+      } catch (e) {
+        alert('Error loading task type: ' + e.message);
+      }
+    }
+
+    function closeTaskTypeModal() {
+      document.getElementById('taskTypeModal').classList.remove('active');
+    }
+
+    function addTaskTypeParam(param = null) {
+      const container = document.getElementById('taskTypeParams');
+      const id = taskTypeParamCounter++;
+      const div = document.createElement('div');
+      div.id = `taskTypeParam_${id}`;
+      div.style.cssText = 'display: flex; gap: 5px; margin-bottom: 5px; align-items: center;';
+      div.innerHTML = `
+        <input type="text" id="taskTypeParamName_${id}" placeholder="Parameter name" value="${param?.name || ''}" style="flex: 1;">
+        <select id="taskTypeParamRequired_${id}" style="width: 100px;">
+          <option value="true" ${param?.required !== false ? 'selected' : ''}>Required</option>
+          <option value="false" ${param?.required === false ? 'selected' : ''}>Optional</option>
+        </select>
+        <button class="btn-danger btn-small" onclick="document.getElementById('taskTypeParam_${id}').remove()">×</button>
+      `;
+      container.appendChild(div);
+    }
+
+    function toggleSubtask(id) {
+      const content = document.getElementById('taskTypeSubtaskContent_' + id);
+      const toggle = document.getElementById('taskTypeSubtaskToggle_' + id);
+      const summary = document.getElementById('taskTypeSubtaskSummary_' + id);
+      if (content.style.display === 'none') {
+        content.style.display = 'block';
+        summary.style.display = 'none';
+        toggle.textContent = '▼';
+      } else {
+        content.style.display = 'none';
+        summary.style.display = 'block';
+        toggle.textContent = '▶';
+        updateSubtaskSummary(id);
+      }
+    }
+
+    function updateSubtaskSummary(id) {
+      const summary = document.getElementById('taskTypeSubtaskSummary_' + id);
+      if (!summary) return;
+      const type = document.getElementById('taskTypeSubtaskType_' + id)?.value || 'janus';
+      const typeName = type === 'janus' ? 'Janus' : type === 'workorder' ? 'Workorder' : type;
+      const psm = document.getElementById('taskTypeSubtaskPsm_' + id)?.value || '';
+      const env = document.getElementById('taskTypeSubtaskEnv_' + id)?.value || '';
+      const parts = [typeName];
+      if (psm) parts.push('psm=' + psm);
+      if (env) parts.push('env=' + env);
+      summary.innerHTML = '<span style="color: #888;">' + parts.join(' | ') + '</span>';
+    }
+
+    // Built-in task type parameter definitions
+    const builtInTaskTypes = {
+      janus: {
+        name: 'Janus Mini Update',
+        params: [
+          { key: 'psm', label: 'PSM', required: true },
+          { key: 'env', label: 'Environment', required: true },
+          { key: 'idl_branch', label: 'IDL Branch', required: true },
+          { key: 'idl_version', label: 'IDL Version', required: false },
+          { key: 'api_group_id', label: 'API Group ID', required: false }
+        ]
+      },
+      workorder: {
+        name: 'Execute Workorder',
+        params: [
+          { key: 'psm', label: 'PSM', required: true },
+          { key: 'env', label: 'Environment', required: true },
+          { key: 'api_group_id', label: 'API Group ID', required: true }
+        ]
+      }
+    };
+
+    function addTaskTypeSubtask(st = null) {
+      const container = document.getElementById('taskTypeSubtasks');
+      const id = taskTypeSubtaskCounter++;
+      const div = document.createElement('div');
+      div.id = 'taskTypeSubtask_' + id;
+      div.style.cssText = 'background: #1a1a2e; padding: 10px; border-radius: 4px; margin-bottom: 8px;';
+
+      const typeOptions = Object.keys(builtInTaskTypes).map(function(key) {
+        const selected = (st?.type === key) ? ' selected' : '';
+        return '<option value="' + key + '"' + selected + '>' + builtInTaskTypes[key].name + '</option>';
+      }).join('');
+
+      div.innerHTML =
+        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+          '<div style="display: flex; align-items: center; gap: 8px; cursor: pointer;" onclick="toggleSubtask(' + id + ')">' +
+            '<span id="taskTypeSubtaskToggle_' + id + '" style="color: #00d9ff; font-size: 0.8em;">▼</span>' +
+            '<strong style="color: #00d9ff;">Subtask ' + (id + 1) + '</strong>' +
+            '<span id="taskTypeSubtaskSummary_' + id + '" style="display: none; margin-left: 10px;"></span>' +
+          '</div>' +
+          '<button class="btn-danger btn-small" onclick="document.getElementById(\'taskTypeSubtask_' + id + '\').remove()">Remove</button>' +
+        '</div>' +
+        '<div id="taskTypeSubtaskContent_' + id + '">' +
+          '<div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px; align-items: center; margin-bottom: 8px;">' +
+            '<label style="color: #888; font-size: 0.85em;">Type:</label>' +
+            '<select id="taskTypeSubtaskType_' + id + '" onchange="updateSubtaskFields(' + id + ')">' + typeOptions + '</select>' +
+          '</div>' +
+          '<div id="taskTypeSubtaskFields_' + id + '"></div>' +
+          '<div id="taskTypeSubtaskMappings_' + id + '" style="margin-top: 8px; padding: 5px; background: #0d1b2a; border-radius: 4px; font-size: 0.8em;"></div>' +
+        '</div>';
+
+      container.appendChild(div);
+      updateSubtaskFields(id, st);
+    }
+
+    function updateSubtaskFields(id, existingData) {
+      const typeSelect = document.getElementById('taskTypeSubtaskType_' + id);
+      const fieldsContainer = document.getElementById('taskTypeSubtaskFields_' + id);
+      if (!typeSelect || !fieldsContainer) return;
+
+      const type = typeSelect.value;
+      const taskTypeDef = builtInTaskTypes[type];
+      if (!taskTypeDef) return;
+
+      // Build fields HTML
+      let fieldsHtml = '<div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px; align-items: center;">';
+      taskTypeDef.params.forEach(function(param) {
+        const value = existingData ? (existingData[param.key] || '') : '';
+        const hasMapping = value.includes('$');
+        const requiredMark = param.required ? ' *' : '';
+        fieldsHtml +=
+          '<label style="color: #888; font-size: 0.85em;">' + param.label + requiredMark + ':</label>' +
+          '<input type="text" id="taskTypeSubtaskField_' + id + '_' + param.key + '" ' +
+            'placeholder="${' + param.key + '}" ' +
+            'value="' + value.replace(/"/g, '&quot;') + '" ' +
+            'style="background: ' + (hasMapping ? '#1a3a1a' : '#16213e') + ';" ' +
+            'oninput="onSubtaskFieldInput(this, ' + id + ')">';
+      });
+      fieldsHtml += '</div>';
+
+      fieldsContainer.innerHTML = fieldsHtml;
+      updateSubtaskMappings(id);
+    }
+
+    function onSubtaskFieldInput(input, id) {
+      input.style.background = input.value.includes('$') ? '#1a3a1a' : '#16213e';
+      updateSubtaskMappings(id);
+    }
+
+    function updateSubtaskMappings(id) {
+      const mappingsDiv = document.getElementById('taskTypeSubtaskMappings_' + id);
+      if (!mappingsDiv) return;
+
+      const typeSelect = document.getElementById('taskTypeSubtaskType_' + id);
+      if (!typeSelect) return;
+
+      const type = typeSelect.value;
+      const taskTypeDef = builtInTaskTypes[type];
+      if (!taskTypeDef) return;
+
+      const mappings = [];
+      taskTypeDef.params.forEach(function(param) {
+        const input = document.getElementById('taskTypeSubtaskField_' + id + '_' + param.key);
+        const value = input ? input.value : '';
+        if (value.includes('${')) {
+          const match = value.match(/\$\{(\w+)\}/);
+          if (match) {
+            mappings.push('<span style="color: #00bf63;">' + param.key + '</span> ← <span style="color: #ffc107;">' + match[1] + '</span>');
+          }
+        } else if (value) {
+          mappings.push('<span style="color: #888;">' + param.key + '</span> = <span style="color: #aaa;">"' + value + '"</span>');
+        }
+      });
+
+      if (mappings.length > 0) {
+        mappingsDiv.innerHTML = '<strong style="color: #666;">Mappings:</strong> ' + mappings.join(' | ');
+      } else {
+        mappingsDiv.innerHTML = '<span style="color: #666;">No mappings defined</span>';
+      }
+    }
+
+    function collectTaskTypeData() {
+      const params = [];
+      const paramDivs = document.getElementById('taskTypeParams').querySelectorAll('[id^="taskTypeParam_"]');
+      for (const div of paramDivs) {
+        const id = div.id.replace('taskTypeParam_', '');
+        const name = document.getElementById(`taskTypeParamName_${id}`)?.value?.trim();
+        if (name) {
+          params.push({
+            name,
+            required: document.getElementById(`taskTypeParamRequired_${id}`)?.value === 'true'
+          });
+        }
+      }
+
+      const subtasks = [];
+      const subtaskDivs = document.getElementById('taskTypeSubtasks').querySelectorAll('[id^="taskTypeSubtask_"]');
+      for (const div of subtaskDivs) {
+        const id = div.id.replace('taskTypeSubtask_', '');
+        const type = document.getElementById('taskTypeSubtaskType_' + id)?.value || 'janus';
+        const taskTypeDef = builtInTaskTypes[type];
+
+        const subtask = { type: type };
+        if (taskTypeDef) {
+          taskTypeDef.params.forEach(function(param) {
+            const input = document.getElementById('taskTypeSubtaskField_' + id + '_' + param.key);
+            subtask[param.key] = input ? input.value : '';
+          });
+        }
+        subtasks.push(subtask);
+      }
+
+      return {
+        name: document.getElementById('taskTypeName').value.trim(),
+        description: document.getElementById('taskTypeDescription').value.trim(),
+        parameters: params,
+        subtasks: subtasks
+      };
+    }
+
+    async function saveTaskType() {
+      const data = collectTaskTypeData();
+
+      if (!data.name) {
+        alert('Name is required');
+        return;
+      }
+      if (data.subtasks.length === 0) {
+        alert('At least one subtask is required');
+        return;
+      }
+
+      const typeId = document.getElementById('taskTypeId').value;
+      try {
+        let res;
+        if (typeId) {
+          // Update existing
+          res = await fetch(API + '/api/task-types/' + typeId, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        } else {
+          // Create new
+          res = await fetch(API + '/api/task-types', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        }
+        const result = await res.json();
+        if (result.error) {
+          alert('Error: ' + result.error);
+        } else {
+          closeTaskTypeModal();
+          refreshTaskTypes();
+        }
+      } catch (e) {
+        alert('Error saving task type: ' + e.message);
+      }
+    }
+
+    async function deleteTaskType(typeId) {
+      if (!confirm('Are you sure you want to delete this task type?')) return;
+      try {
+        await fetch(API + '/api/task-types/' + typeId, { method: 'DELETE' });
+        refreshTaskTypes();
+      } catch (e) {
+        alert('Error deleting task type: ' + e.message);
+      }
+    }
+
+    // Create task from type
+    async function openCreateFromTypeModal(typeId) {
+      try {
+        const res = await fetch(API + '/api/task-types/' + typeId);
+        const t = await res.json();
+
+        document.getElementById('createFromTypeId').value = typeId;
+        document.getElementById('createFromTypeName').textContent = t.name;
+
+        // Build parameter inputs
+        const container = document.getElementById('createFromTypeParams');
+        container.innerHTML = (t.parameters || []).map(p => `
+          <div style="margin-bottom: 10px;">
+            <label style="color: #aaa; font-size: 0.9em;">${p.name} ${p.required ? '<span style="color: #e94560;">*</span>' : ''}</label>
+            <input type="text" id="createFromTypeParam_${p.name}" placeholder="${p.name}" data-required="${p.required}">
+          </div>
+        `).join('');
+
+        document.getElementById('createFromTypeModal').classList.add('active');
+      } catch (e) {
+        alert('Error loading task type: ' + e.message);
+      }
+    }
+
+    function closeCreateFromTypeModal() {
+      document.getElementById('createFromTypeModal').classList.remove('active');
+    }
+
+    async function submitCreateFromType() {
+      const typeId = document.getElementById('createFromTypeId').value;
+      const paramInputs = document.getElementById('createFromTypeParams').querySelectorAll('input');
+
+      const params = {};
+      for (const input of paramInputs) {
+        const name = input.id.replace('createFromTypeParam_', '');
+        const value = input.value.trim();
+        if (input.dataset.required === 'true' && !value) {
+          alert(`Parameter "${name}" is required`);
+          return;
+        }
+        params[name] = value;
+      }
+
+      try {
+        const res = await fetch(API + '/api/task-types/' + typeId + '/create-task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params)
+        });
+        const result = await res.json();
+        if (result.error) {
+          alert('Error: ' + result.error);
+        } else {
+          closeCreateFromTypeModal();
+          refreshTasks();
+          selectTask(result.taskId);
+          alert('Task created: ' + result.taskId);
+        }
+      } catch (e) {
+        alert('Error creating task: ' + e.message);
+      }
+    }
 
     // Proxy Configuration
     async function loadProxyConfig() {
@@ -1246,6 +2508,7 @@ node mac_cdn_proxy.js</code></pre>
     // Initial load
     loadCookies();
     refreshTasks();
+    refreshTaskTypes();
     loadProxyConfig();
     loadProxyScript();
     loadBrowserStatus();
