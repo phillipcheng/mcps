@@ -7,78 +7,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 10px 0; }
-    h1 { color: #00d9ff; margin-bottom: 20px; }
-    h2 { color: #00d9ff; margin: 20px 0 10px; font-size: 1.2em; }
-    .container { width: 100%; max-width: none; margin: 0; padding: 0; }
-    .card { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-    .card h3 { color: #00d9ff; margin-bottom: 15px; }
-    input, textarea, select { width: 100%; padding: 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #eee; margin-bottom: 10px; }
-    textarea { min-height: 150px; font-family: monospace; }
-    button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: 10px; margin-bottom: 10px; }
-    .btn-primary { background: #00d9ff; color: #1a1a2e; }
-    .btn-secondary { background: #0f3460; color: #eee; }
-    .btn-danger { background: #e94560; color: #fff; }
-    .btn-success { background: #00bf63; color: #fff; }
-    .btn-small { padding: 5px 10px; font-size: 0.85em; margin: 0; }
-    .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.85em; }
-    .status-running { background: #ffc107; color: #000; }
-    .status-completed { background: #00bf63; color: #fff; }
-    .status-error { background: #e94560; color: #fff; }
-    .status-pending { background: #6c757d; color: #fff; }
-    .status-stopped { background: #fd7e14; color: #fff; }
-    .log-box { background: #0d1b2a; padding: 15px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85em; white-space: pre-wrap; }
-    .screenshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-    .screenshot-item { background: #0f3460; border-radius: 4px; overflow: hidden; cursor: pointer; }
-    .screenshot-item img { width: 100%; display: block; }
-    .screenshot-item .label { padding: 5px; font-size: 0.8em; text-align: center; }
-    .task-list { list-style: none; }
-    .task-list li { padding: 10px; background: #0f3460; margin-bottom: 5px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-    .task-list li:hover { background: #1a3a5c; }
-    .task-list li.selected { background: #1a3a5c; border: 1px solid #00d9ff; }
-    .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 100; justify-content: center; align-items: center; }
-    .modal.active { display: flex; }
-    .modal img { max-width: 95%; max-height: 95%; }
-    .modal .close { position: absolute; top: 20px; right: 30px; font-size: 30px; cursor: pointer; color: #fff; }
-    .modal-content { background: #16213e; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%; }
-    .modal-content h3 { color: #00d9ff; margin-bottom: 20px; }
-    .info { color: #aaa; font-size: 0.9em; margin-bottom: 10px; }
-    .flex { display: flex; gap: 10px; align-items: center; }
-    .flex-between { display: flex; justify-content: space-between; align-items: center; }
-    .cookie-count { background: #00d9ff; color: #1a1a2e; padding: 2px 8px; border-radius: 10px; font-size: 0.85em; }
-
-    /* Tabs */
-    .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #0f3460; padding-bottom: 10px; }
-    .tab { padding: 10px 20px; background: #0f3460; border: none; color: #aaa; cursor: pointer; border-radius: 4px 4px 0 0; font-weight: bold; }
-    .tab.active { background: #00d9ff; color: #1a1a2e; }
-    .tab:hover:not(.active) { background: #1a3a5c; color: #eee; }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-
-    /* Task table */
-    .table-container { overflow-x: auto; }
-    .task-table { width: 100%; border-collapse: collapse; min-width: 800px; }
-    .task-table th, .task-table td { padding: 10px; text-align: left; border-bottom: 1px solid #0f3460; white-space: nowrap; }
-    .task-table th { color: #00d9ff; background: #0d1b2a; position: sticky; top: 0; }
-    .task-table tr:hover { background: #1a3a5c; cursor: pointer; }
-    .task-table tr.selected { background: #1a3a5c; }
-    .checkbox-col { width: 40px; }
-    @media (max-width: 600px) {
-      .task-table { min-width: 600px; }
-      .task-table th, .task-table td { padding: 6px 8px; font-size: 0.85em; }
-    }
-
-    /* Pagination */
-    .pagination { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 15px; }
-    .pagination button { margin: 0; }
-    .pagination span { color: #aaa; }
-
-    /* Two column layout for task details */
-    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
-  </style>
+  <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
   <div class="container">
@@ -341,21 +270,8 @@ node mac_cdn_proxy.js</code></pre>
 
       <div class="card" style="margin-top: 20px;">
         <h3>📚 Built-in Task Types</h3>
-        <div style="margin-top: 15px;">
-          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
-            <h4 style="color: #00d9ff; margin-bottom: 10px;">🚀 Janus Mini Update</h4>
-            <p style="color: #aaa; font-size: 0.9em;">Updates IDL branch configuration, clicks Deployment → Release.</p>
-            <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> PSM, Environment, IDL Branch</p>
-          </div>
-          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
-            <h4 style="color: #00d9ff; margin-bottom: 10px;">📋 Execute Workorder</h4>
-            <p style="color: #aaa; font-size: 0.9em;">Executes a pending workorder (clicks "开始发布" and "确认").</p>
-            <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> PSM, Environment (Lane), API Group ID</p>
-          </div>
-          <div style="background: #0f3460; padding: 15px; border-radius: 4px;">
-            <h4 style="color: #00d9ff; margin-bottom: 10px;">🔗 Chained Task</h4>
-            <p style="color: #aaa; font-size: 0.9em;">Execute multiple tasks sequentially. Stops on first error.</p>
-          </div>
+        <div id="builtInTypesContainer" style="margin-top: 15px;">
+          <p style="color: #666;">Loading built-in task types...</p>
         </div>
       </div>
     </div>
@@ -384,9 +300,7 @@ node mac_cdn_proxy.js</code></pre>
       <label style="color: #aaa; font-size: 0.9em;">Task Type</label>
       <select id="newTaskType" onchange="toggleTaskTypeFields()">
         <optgroup label="Built-in Types">
-          <option value="janus">Janus Mini Update</option>
-          <option value="workorder">Execute Workorder</option>
-          <option value="chained">Chained Task (Multiple)</option>
+          <option value="">Loading...</option>
         </optgroup>
         <optgroup id="customTypeOptions" label="Custom Types">
         </optgroup>
@@ -546,6 +460,73 @@ node mac_cdn_proxy.js</code></pre>
     let currentTaskId = null;
     window.logsAutoScroll = true; // Auto-scroll logs by default
 
+    // Built-in task types loaded from API
+    let builtInTaskTypes = {};
+
+    // Load built-in task types from API
+    async function loadBuiltInTaskTypes() {
+      try {
+        const res = await fetch(API + '/api/tasks/builtin-types');
+        const types = await res.json();
+        // Convert array to object keyed by id
+        builtInTaskTypes = {};
+        types.forEach(t => {
+          builtInTaskTypes[t.id] = { name: t.name, params: t.params };
+        });
+        // Update dropdown
+        updateBuiltInTypesDropdown();
+        // Update documentation section
+        updateBuiltInTypesDocumentation();
+      } catch (e) {
+        console.error('Failed to load built-in task types:', e);
+      }
+    }
+
+    // Update the built-in types dropdown in create task modal
+    function updateBuiltInTypesDropdown() {
+      const optgroup = document.querySelector('#newTaskType optgroup[label="Built-in Types"]');
+      if (!optgroup) return;
+
+      const options = Object.entries(builtInTaskTypes).map(([id, def]) =>
+        '<option value="' + id + '">' + def.name + '</option>'
+      ).join('');
+      optgroup.innerHTML = options + '<option value="chained">Chained Task (Multiple)</option>';
+    }
+
+    // Update the built-in task types documentation section
+    function updateBuiltInTypesDocumentation() {
+      const container = document.getElementById('builtInTypesContainer');
+      if (!container) return;
+
+      const icons = { janus: '🚀', workorder: '📋', janus_info: '🔍', chained: '🔗' };
+      const descriptions = {
+        janus: 'Updates IDL branch configuration, clicks Deployment → Release.',
+        workorder: 'Executes a pending workorder (clicks "开始发布" and "确认").',
+        janus_info: 'Read-only task to get current and latest IDL version for a branch.',
+        chained: 'Execute multiple tasks sequentially. Stops on first error.'
+      };
+
+      let html = '';
+      for (const [id, def] of Object.entries(builtInTaskTypes)) {
+        const icon = icons[id] || '📦';
+        const desc = descriptions[id] || def.name;
+        const required = def.params.filter(p => p.required).map(p => p.label).join(', ');
+        html += `
+          <div style="background: #0f3460; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+            <h4 style="color: #00d9ff; margin-bottom: 10px;">${icon} ${def.name}</h4>
+            <p style="color: #aaa; font-size: 0.9em;">${desc}</p>
+            <p style="color: #aaa; font-size: 0.9em; margin-top: 10px;"><strong>Required:</strong> ${required}</p>
+          </div>`;
+      }
+      // Add chained task (not in API response)
+      html += `
+        <div style="background: #0f3460; padding: 15px; border-radius: 4px;">
+          <h4 style="color: #00d9ff; margin-bottom: 10px;">🔗 Chained Task</h4>
+          <p style="color: #aaa; font-size: 0.9em;">Execute multiple tasks sequentially. Stops on first error.</p>
+        </div>`;
+      container.innerHTML = html;
+    }
+
     // Helper function to convert URLs in text to clickable links
     function linkifyUrls(text) {
       // Escape HTML first to prevent XSS
@@ -679,6 +660,10 @@ node mac_cdn_proxy.js</code></pre>
         if (type === 'workorder') {
           janusFields.style.display = 'none';
           workorderFields.style.display = 'block';
+        } else if (type === 'janus_info') {
+          // Get Janus Info - same as janus but read-only
+          janusFields.style.display = 'block';
+          workorderFields.style.display = 'none';
         } else {
           janusFields.style.display = 'block';
           workorderFields.style.display = 'none';
@@ -975,6 +960,24 @@ node mac_cdn_proxy.js</code></pre>
 
         endpoint = '/api/tasks';
         body = { type: 'workorder', parameters: { psm, env, api_group_id } };
+
+      } else if (type === 'janus_info') {
+        // Get Janus Mini Info - read-only task
+        const psm = document.getElementById('newPsm').value;
+        const env = document.getElementById('newEnv').value;
+        const idl_branch = document.getElementById('newIdlBranch').value;
+        const api_group_id = document.getElementById('newApiGroupId').value;
+
+        if (!psm || !env || !idl_branch) {
+          alert('PSM, Environment, and IDL Branch are required');
+          return;
+        }
+
+        const parameters = { psm, env, idl_branch };
+        if (api_group_id) parameters.api_group_id = api_group_id;
+
+        endpoint = '/api/tasks';
+        body = { type: 'janus_info', parameters };
 
       } else {
         alert('Unknown task type: ' + type);
@@ -1986,27 +1989,7 @@ node mac_cdn_proxy.js</code></pre>
       summary.innerHTML = '<span style="color: #888;">' + parts.join(' | ') + '</span>';
     }
 
-    // Built-in task type parameter definitions
-    const builtInTaskTypes = {
-      janus: {
-        name: 'Janus Mini Update',
-        params: [
-          { key: 'psm', label: 'PSM', required: true },
-          { key: 'env', label: 'Environment', required: true },
-          { key: 'idl_branch', label: 'IDL Branch', required: true },
-          { key: 'idl_version', label: 'IDL Version', required: false },
-          { key: 'api_group_id', label: 'API Group ID', required: false }
-        ]
-      },
-      workorder: {
-        name: 'Execute Workorder',
-        params: [
-          { key: 'psm', label: 'PSM', required: true },
-          { key: 'env', label: 'Environment', required: true },
-          { key: 'api_group_id', label: 'API Group ID', required: true }
-        ]
-      }
-    };
+    // builtInTaskTypes is now loaded dynamically from API at top of script
 
     function addTaskTypeSubtask(st = null) {
       const container = document.getElementById('taskTypeSubtasks');
@@ -2506,6 +2489,7 @@ node mac_cdn_proxy.js</code></pre>
     }
 
     // Initial load
+    loadBuiltInTaskTypes();
     loadCookies();
     refreshTasks();
     refreshTaskTypes();

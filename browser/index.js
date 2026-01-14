@@ -8,6 +8,9 @@ const {
 } = require("@modelcontextprotocol/sdk/types.js");
 const puppeteer = require("puppeteer");
 
+// Backend server configuration
+const BACKEND_URL = process.env.BROWSER_BACKEND_URL || "http://localhost:3456";
+
 const server = new Server(
   {
     name: "mcp-browser",
@@ -114,6 +117,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             dry_run: { type: "boolean", description: "If true, only navigate and take screenshots without clicking deploy/release. Default: false" }
           },
           required: ["psm", "env"]
+        }
+      },
+      {
+        name: "crawl_task",
+        description: "Execute a browser automation task and return results. Submits a task to the backend server, waits for completion, and returns the result. Available task types: 'janus_info' (get current and latest IDL version), 'janus_update' (update IDL version and deploy), 'workorder' (file workorder task).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_type: {
+              type: "string",
+              enum: ["janus_info", "janus_update", "workorder"],
+              description: "The type of task to execute"
+            },
+            params: {
+              type: "object",
+              description: "Task parameters. For janus_info: {psm, env, idl_branch, api_group_id?}. For janus_update: {psm, env, idl_branch, idl_version?, api_group_id?}. For workorder: {psm, env, idl_branch, workorder_type}.",
+              properties: {
+                psm: { type: "string", description: "PSM name, e.g., 'oec.reverse.strategy'" },
+                env: { type: "string", description: "Environment/lane name, e.g., 'boe_feat_system_deleete'" },
+                idl_branch: { type: "string", description: "IDL branch name, e.g., 'feat/sell_rule'" },
+                idl_version: { type: "string", description: "Specific IDL version to use (optional, defaults to latest)" },
+                api_group_id: { type: "string", description: "API group ID for direct navigation (optional)" },
+                workorder_type: { type: "string", description: "Type of workorder for workorder tasks" }
+              }
+            },
+            timeout: {
+              type: "number",
+              description: "Maximum wait time in seconds for task completion. Default: 120"
+            }
+          },
+          required: ["task_type", "params"]
         }
       }
     ],
@@ -530,6 +564,115 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{
           type: "text",
           text: `Error in Janus Mini update:\n\nPSM: ${psm}\nEnvironment: ${env}\nError: ${error.message}\n\nLogs:\n${logs.join('\n')}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  if (name === "crawl_task") {
+    const { task_type, params, timeout = 120 } = args;
+    const logs = [];
+    const log = (msg) => {
+      console.error(`[CrawlTask] ${msg}`);
+      logs.push(`[${new Date().toISOString()}] ${msg}`);
+    };
+
+    try {
+      // Map task_type to API endpoint
+      const endpointMap = {
+        'janus_info': '/api/tasks/janus-info',
+        'janus_update': '/api/tasks/janus',
+        'workorder': '/api/tasks/workorder'
+      };
+
+      const endpoint = endpointMap[task_type];
+      if (!endpoint) {
+        throw new Error(`Unknown task type: ${task_type}. Available: ${Object.keys(endpointMap).join(', ')}`);
+      }
+
+      // Submit task
+      log(`Submitting ${task_type} task to ${BACKEND_URL}${endpoint}`);
+      log(`Parameters: ${JSON.stringify(params)}`);
+
+      const submitRes = await fetch(`${BACKEND_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+
+      if (!submitRes.ok) {
+        const errorText = await submitRes.text();
+        throw new Error(`Failed to submit task: ${submitRes.status} ${errorText}`);
+      }
+
+      const submitData = await submitRes.json();
+      const taskId = submitData.taskId;
+      log(`Task submitted with ID: ${taskId}`);
+
+      // Poll for completion
+      const startTime = Date.now();
+      const timeoutMs = timeout * 1000;
+      let taskResult = null;
+
+      while (Date.now() - startTime < timeoutMs) {
+        await new Promise(r => setTimeout(r, 2000)); // Poll every 2 seconds
+
+        const statusRes = await fetch(`${BACKEND_URL}/api/tasks/${taskId}`);
+        if (!statusRes.ok) {
+          log(`Warning: Failed to fetch task status: ${statusRes.status}`);
+          continue;
+        }
+
+        const task = await statusRes.json();
+        log(`Task status: ${task.status}, stage: ${task.stage || 'N/A'}`);
+
+        if (task.status === 'completed') {
+          taskResult = task;
+          log(`Task completed successfully`);
+          break;
+        } else if (task.status === 'error' || task.status === 'failed') {
+          throw new Error(`Task failed: ${task.error || 'Unknown error'}`);
+        }
+      }
+
+      if (!taskResult) {
+        throw new Error(`Task timed out after ${timeout} seconds`);
+      }
+
+      // Build response
+      let resultData = {};
+      if (taskResult.result) {
+        try {
+          resultData = JSON.parse(taskResult.result);
+        } catch (e) {
+          resultData = { raw: taskResult.result };
+        }
+      }
+      if (taskResult.metadata?.version_info) {
+        resultData.version_info = taskResult.metadata.version_info;
+      }
+
+      const content = [{
+        type: "text",
+        text: `Task Result (${task_type}):\n\nTask ID: ${taskId}\nStatus: ${taskResult.status}\nDuration: ${Math.round((new Date(taskResult.endTime) - new Date(taskResult.startTime)) / 1000)}s\n\nResult:\n${JSON.stringify(resultData, null, 2)}\n\nLogs:\n${logs.join('\n')}`
+      }];
+
+      // Optionally include task logs
+      if (taskResult.logs && taskResult.logs.length > 0) {
+        content.push({
+          type: "text",
+          text: `\n--- Task Execution Logs ---\n${taskResult.logs.slice(-20).join('\n')}`
+        });
+      }
+
+      return { content };
+
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error executing crawl_task:\n\nTask Type: ${task_type}\nParams: ${JSON.stringify(params)}\nError: ${error.message}\n\nLogs:\n${logs.join('\n')}`
         }],
         isError: true
       };
