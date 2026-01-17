@@ -6,6 +6,7 @@ const { createJanusTaskRunner } = require('./janus-runner');
 const { createWorkorderTaskRunner } = require('./workorder-runner');
 const { createChainedTaskRunner } = require('./chained-runner');
 const { createJanusInfoRunner } = require('./janus-info-runner');
+const { createReleaseMonitorRunner } = require('./release-monitor-runner');
 
 /**
  * Built-in task type definitions
@@ -43,6 +44,14 @@ const builtInTaskTypes = {
       { key: 'api_group_id', label: 'API Group ID', required: false }
     ],
     runner: 'janus_info'
+  },
+  release_monitor: {
+    name: 'Monitor Release Pipeline',
+    internalType: 'release_monitor',
+    params: [
+      { key: 'task_name', label: 'Dev Task Name', required: true }
+    ],
+    runner: 'release_monitor'
   }
 };
 
@@ -76,12 +85,14 @@ function createTaskRunners(ctx) {
   const runJanusTask = createJanusTaskRunner(ctx);
   const runWorkorderTask = createWorkorderTaskRunner(ctx);
   const runJanusInfoTask = createJanusInfoRunner(ctx);
+  const runReleaseMonitorTask = createReleaseMonitorRunner(ctx);
   const runChainedTask = createChainedTaskRunner(ctx, runJanusTask, runWorkorderTask);
 
   return {
     runJanusTask,
     runWorkorderTask,
     runJanusInfoTask,
+    runReleaseMonitorTask,
     runChainedTask,
 
     /**
@@ -105,6 +116,8 @@ function createTaskRunners(ctx) {
         case 'janus_info':
         case 'get_janus_mini':
           return runJanusInfoTask(taskId, task);
+        case 'release_monitor':
+          return runReleaseMonitorTask(taskId, task);
         default:
           throw new Error(`Unknown task type: ${type}`);
       }
@@ -117,6 +130,7 @@ module.exports = {
   createWorkorderTaskRunner,
   createChainedTaskRunner,
   createJanusInfoRunner,
+  createReleaseMonitorRunner,
   createTaskRunners,
   getBuiltInTaskTypes,
   getBuiltInTaskType,

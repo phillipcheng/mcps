@@ -34,6 +34,22 @@
             <button class="btn-danger" onclick="deleteSelectedTasks()" id="deleteSelectedBtn" style="display: none;">Delete Selected</button>
           </div>
         </div>
+        <!-- Filter controls -->
+        <div style="margin-bottom: 15px; display: flex; gap: 15px; align-items: center;">
+          <label style="color: #aaa;">Filter:</label>
+          <select id="filterType" onchange="refreshTasks()" style="padding: 5px 10px; background: #0d1b2a; border: 1px solid #1e3a5f; border-radius: 4px; color: #fff;">
+            <option value="">All Types</option>
+          </select>
+          <input type="text" id="filterTypeCustom" placeholder="Custom type..." onkeyup="refreshTasks()" style="padding: 5px 10px; background: #0d1b2a; border: 1px solid #1e3a5f; border-radius: 4px; color: #fff; width: 120px;">
+          <select id="filterStatus" onchange="refreshTasks()" style="padding: 5px 10px; background: #0d1b2a; border: 1px solid #1e3a5f; border-radius: 4px; color: #fff;">
+            <option value="">All Status</option>
+            <option value="running">Running</option>
+            <option value="completed">Completed</option>
+            <option value="error">Error</option>
+            <option value="pending">Pending</option>
+          </select>
+          <button class="btn-secondary" onclick="clearFilters()" style="padding: 5px 10px;">Clear</button>
+        </div>
         <div class="table-container">
         <table class="task-table">
           <thead>
@@ -294,7 +310,7 @@ node mac_cdn_proxy.js</code></pre>
           <label style="color: #00d9ff; font-size: 0.9em; margin: 0;">Import from JSON (paste and click Import)</label>
           <button class="btn-secondary btn-small" onclick="importTaskJson()">Import</button>
         </div>
-        <textarea id="newTaskJson" placeholder='{"type": "janus", "psm": "...", "env": "...", "idl_branch": "..."}' style="min-height: 60px; font-family: monospace; font-size: 0.85em;"></textarea>
+        <textarea id="newTaskJson" placeholder='{"type": "janus", "psm": "...", "env": "...", "idl_branch": "..."} or {"type": "release_monitor", "task_name": "oncall analysis"}' style="min-height: 60px; font-family: monospace; font-size: 0.85em;"></textarea>
       </div>
 
       <label style="color: #aaa; font-size: 0.9em;">Task Type</label>
@@ -323,6 +339,10 @@ node mac_cdn_proxy.js</code></pre>
         <div id="workorderOnlyFields" style="display: none;">
           <label style="color: #aaa; font-size: 0.9em;">API Group ID (required)</label>
           <input type="text" id="newWorkorderApiGroupId" placeholder="e.g., 340871 for oec.reverse.strategy">
+        </div>
+        <div id="releaseMonitorFields" style="display: none;">
+          <label style="color: #aaa; font-size: 0.9em;">Dev Task Name (required)</label>
+          <input type="text" id="newTaskName" placeholder="e.g., oncall analysis">
         </div>
       </div>
 
@@ -482,6 +502,48 @@ node mac_cdn_proxy.js</code></pre>
       }
     }
 
+    // Load task types for the filter dropdown dynamically
+    let filterTypesLoading = false;
+    async function loadFilterTypes() {
+      if (filterTypesLoading) return;
+      filterTypesLoading = true;
+
+      const select = document.getElementById('filterType');
+      const currentValue = select.value;
+
+      // Keep "All Types" option
+      select.innerHTML = '<option value="">All Types</option>';
+
+      // Add built-in types
+      Object.entries(builtInTaskTypes).forEach(([id, def]) => {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = def.name;
+        select.appendChild(option);
+      });
+
+      // Fetch and add custom task types
+      try {
+        const res = await fetch(API + '/api/task-types');
+        const customTypes = await res.json();
+        customTypes.forEach(t => {
+          const option = document.createElement('option');
+          option.value = t.name;
+          option.textContent = t.name;
+          select.appendChild(option);
+        });
+      } catch (e) {
+        console.error('Failed to load custom task types for filter:', e);
+      }
+
+      // Restore selected value if still valid
+      if (currentValue) {
+        select.value = currentValue;
+      }
+
+      filterTypesLoading = false;
+    }
+
     // Update the built-in types dropdown in create task modal
     function updateBuiltInTypesDropdown() {
       const optgroup = document.querySelector('#newTaskType optgroup[label="Built-in Types"]');
@@ -630,6 +692,7 @@ node mac_cdn_proxy.js</code></pre>
       const customTypeFields = document.getElementById('customTypeFields');
       const janusFields = document.getElementById('janusOnlyFields');
       const workorderFields = document.getElementById('workorderOnlyFields');
+      const releaseMonitorFields = document.getElementById('releaseMonitorFields');
 
       // Hide all first
       singleTaskFields.style.display = 'none';
@@ -655,8 +718,27 @@ node mac_cdn_proxy.js</code></pre>
         }
       } else if (type === 'chained') {
         chainedTaskFields.style.display = 'block';
+      } else if (type === 'release_monitor') {
+        // Release Monitor - only needs task_name, hide PSM/ENV fields
+        singleTaskFields.style.display = 'block';
+        janusFields.style.display = 'none';
+        workorderFields.style.display = 'none';
+        releaseMonitorFields.style.display = 'block';
+        // Hide PSM and ENV labels and inputs
+        document.querySelectorAll('#singleTaskFields > label').forEach((el, i) => {
+          if (i < 2) el.style.display = 'none'; // Hide PSM and ENV labels
+        });
+        document.getElementById('newPsm').style.display = 'none';
+        document.getElementById('newEnv').style.display = 'none';
       } else {
         singleTaskFields.style.display = 'block';
+        // Show PSM and ENV labels and inputs
+        document.querySelectorAll('#singleTaskFields > label').forEach((el, i) => {
+          if (i < 2) el.style.display = ''; // Show PSM and ENV labels
+        });
+        document.getElementById('newPsm').style.display = '';
+        document.getElementById('newEnv').style.display = '';
+        releaseMonitorFields.style.display = 'none';
         if (type === 'workorder') {
           janusFields.style.display = 'none';
           workorderFields.style.display = 'block';
@@ -861,6 +943,10 @@ node mac_cdn_proxy.js</code></pre>
         // Set task type
         if (config.type === 'workorder' || config.type === 'janus_workorder_execute') {
           document.getElementById('newTaskType').value = 'workorder';
+        } else if (config.type === 'release_monitor') {
+          document.getElementById('newTaskType').value = 'release_monitor';
+        } else if (config.type === 'janus_info') {
+          document.getElementById('newTaskType').value = 'janus_info';
         } else {
           document.getElementById('newTaskType').value = 'janus';
         }
@@ -877,6 +963,9 @@ node mac_cdn_proxy.js</code></pre>
           document.getElementById('newApiGroupId').value = config.api_group_id;
           document.getElementById('newWorkorderApiGroupId').value = config.api_group_id;
         }
+
+        // Set release_monitor specific field
+        if (config.task_name) document.getElementById('newTaskName').value = config.task_name;
 
         alert('JSON imported! Review the fields and click Create Task.');
       } catch (e) {
@@ -978,6 +1067,18 @@ node mac_cdn_proxy.js</code></pre>
 
         endpoint = '/api/tasks';
         body = { type: 'janus_info', parameters };
+
+      } else if (type === 'release_monitor') {
+        // Monitor Release Pipeline - only needs task_name
+        const task_name = document.getElementById('newTaskName').value;
+
+        if (!task_name) {
+          alert('Dev Task Name is required');
+          return;
+        }
+
+        endpoint = '/api/tasks';
+        body = { type: 'release_monitor', parameters: { task_name } };
 
       } else {
         alert('Unknown task type: ' + type);
@@ -1262,10 +1363,32 @@ node mac_cdn_proxy.js</code></pre>
     }
 
     // Tasks
+    function clearFilters() {
+      document.getElementById('filterType').value = '';
+      document.getElementById('filterTypeCustom').value = '';
+      document.getElementById('filterStatus').value = '';
+      refreshTasks();
+    }
+
     async function refreshTasks() {
       const res = await fetch(API + '/api/tasks');
-      const tasks = await res.json();
+      let tasks = await res.json();
       const tbody = document.getElementById('taskTableBody');
+
+      // Apply filters
+      const filterType = document.getElementById('filterType').value;
+      const filterTypeCustom = document.getElementById('filterTypeCustom').value.trim().toLowerCase();
+      const filterStatus = document.getElementById('filterStatus').value;
+
+      if (filterType) {
+        tasks = tasks.filter(t => t.type === filterType || t.type.includes(filterType));
+      }
+      if (filterTypeCustom) {
+        tasks = tasks.filter(t => t.type.toLowerCase().includes(filterTypeCustom));
+      }
+      if (filterStatus) {
+        tasks = tasks.filter(t => t.status === filterStatus);
+      }
 
       // Check for running task
       const runningTask = tasks.find(t => t.status === 'running');
@@ -1892,6 +2015,9 @@ node mac_cdn_proxy.js</code></pre>
             '</div>' +
           '</div>';
         }).join('');
+
+        // Also refresh the filter dropdown with updated custom types
+        loadFilterTypes();
       } catch (e) {
         document.getElementById('taskTypesList').innerHTML = '<p style="color: #e94560;">Error loading task types: ' + e.message + '</p>';
       }

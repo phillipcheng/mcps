@@ -420,34 +420,70 @@ function createJanusTaskRunner(ctx) {
           const allOptions = [];
           for (const opt of optionElements) {
             const text = opt.textContent;
-            // Extract version (e.g., "Version:1.0.8" or just version number)
-            const versionMatch = text.match(/Version[:\s]*(\d+\.\d+\.\d+)/i) || text.match(/^(\d+\.\d+\.\d+)/);
-            // Extract branch (e.g., "Branch: feat/sell_rule")
-            const branchMatch = text.match(/Branch[:\s]*([^\s,]+)/i);
+            // Extract version - try multiple patterns
+            // Pattern 1: "Version:1.0.8" or "Version: 1.0.8"
+            // Pattern 2: Just version number "1.0.8"
+            // Pattern 3: Version anywhere in text
+            let versionMatch = text.match(/Version[:\s]*(\d+\.\d+\.\d+)/i);
+            if (!versionMatch) versionMatch = text.match(/^(\d+\.\d+\.\d+)/);
+            if (!versionMatch) versionMatch = text.match(/(\d+\.\d+\.\d+)/);
+
+            // Extract branch - try multiple patterns
+            // Pattern 1: "Branch: feat/sell_rule" or "Branch:feat/sell_rule"
+            // Pattern 2: Branch name anywhere after common separators
+            let branchMatch = text.match(/Branch[:\s]*([^\s,\)]+)/i);
+            if (!branchMatch) branchMatch = text.match(/([a-zA-Z]+\/[a-zA-Z0-9_-]+)/);
 
             allOptions.push({
               element: opt,
-              text: text,
+              text: text.substring(0, 100), // Truncate for logging
               version: versionMatch ? versionMatch[1] : null,
               branch: branchMatch ? branchMatch[1] : null
             });
           }
 
-          // Filter by branch if specified
+          // Filter by branch - MUST match task's branch, no fallback to all
           let filteredOptions = allOptions;
+          let matchType = 'all';
           if (branch) {
-            filteredOptions = allOptions.filter(o => o.branch && o.branch.includes(branch));
-            // If no match by branch name, include options without branch info
+            // First try exact branch match
+            filteredOptions = allOptions.filter(o => o.branch === branch);
+            matchType = 'exact';
+
+            // Then try branch ends with target (e.g., "feat/sell_rule" matches "xxx/feat/sell_rule")
             if (filteredOptions.length === 0) {
-              filteredOptions = allOptions.filter(o => o.text.includes(branch) || !o.branch);
+              filteredOptions = allOptions.filter(o => o.branch && o.branch.endsWith(branch));
+              matchType = 'endsWith';
             }
+
+            // Then try partial match (branch contains target)
+            if (filteredOptions.length === 0) {
+              filteredOptions = allOptions.filter(o => o.branch && o.branch.includes(branch));
+              matchType = 'includes';
+            }
+
+            // Then try case-insensitive match
+            if (filteredOptions.length === 0) {
+              const branchLower = branch.toLowerCase();
+              filteredOptions = allOptions.filter(o => o.branch && o.branch.toLowerCase().includes(branchLower));
+              matchType = 'caseInsensitive';
+            }
+
+            // Then try text contains branch (raw option text)
+            if (filteredOptions.length === 0) {
+              filteredOptions = allOptions.filter(o => o.text.toLowerCase().includes(branch.toLowerCase()));
+              matchType = 'textContains';
+            }
+
+            // NO FALLBACK to all options - must match the branch
           }
 
           if (filteredOptions.length === 0) {
             return {
               selected: false,
-              reason: `no options for branch ${branch}`,
+              reason: `no versions found for branch "${branch}"`,
               allBranches: [...new Set(allOptions.map(o => o.branch).filter(Boolean))],
+              allOptions: allOptions.slice(0, 10).map(o => ({ text: o.text, version: o.version, branch: o.branch })),
               optionCount: allOptions.length
             };
           }
@@ -462,6 +498,9 @@ function createJanusTaskRunner(ctx) {
             }
             return 0;
           });
+
+          // Get all versions for logging
+          const allVersions = filteredOptions.map(o => o.version).filter(Boolean);
 
           let selected = null;
           if (targetVer) {
@@ -483,7 +522,11 @@ function createJanusTaskRunner(ctx) {
               version: selected.version,
               branch: selected.branch,
               optionCount: allOptions.length,
-              filteredCount: filteredOptions.length
+              filteredCount: filteredOptions.length,
+              maxVersion: allVersions[0],
+              availableVersions: allVersions.slice(0, 5),
+              matchType: matchType,
+              targetBranch: branch
             };
           }
 
@@ -491,9 +534,15 @@ function createJanusTaskRunner(ctx) {
         }, targetVersion, targetBranch);
 
         if (selectResult.selected) {
-          log(`Version selected: ${selectResult.version} (branch: ${selectResult.branch}, ${selectResult.filteredCount}/${selectResult.optionCount} options)`);
+          log(`Version selected: ${selectResult.version} (max for branch "${selectResult.targetBranch}")`);
+          log(`Match type: ${selectResult.matchType}, branch in option: ${selectResult.branch}`);
+          log(`Filtered ${selectResult.filteredCount}/${selectResult.optionCount} options, versions: ${selectResult.availableVersions?.join(', ') || 'N/A'}`);
         } else {
-          log(`Version selection failed: ${selectResult.reason}, branches: ${selectResult.allBranches?.join(', ') || 'N/A'}`);
+          log(`Version selection failed: ${selectResult.reason}`);
+          log(`Available branches: ${selectResult.allBranches?.join(', ') || 'N/A'}`);
+          if (selectResult.allOptions) {
+            log(`Sample options: ${JSON.stringify(selectResult.allOptions)}`);
+          }
         }
       } else {
         log('Version dropdown not found');
@@ -549,6 +598,38 @@ function createJanusTaskRunner(ctx) {
       log('Deployment button clicked');
       await new Promise(r => setTimeout(r, 3000));
       await addScreenshot(page, '7_deployment');
+
+      // Check if IDL tab has red badge (indicates changes)
+      const hasIdlChanges = await page.evaluate(() => {
+        // Find the IDL tab
+        const tabs = document.querySelectorAll('[role="tab"], .ant-tabs-tab');
+        for (const tab of tabs) {
+          const text = tab.textContent || '';
+          if (text.includes('IDL') || tab.getAttribute('data-node-key') === 'idls') {
+            // Check for ant-badge (red dot indicating changes)
+            const badge = tab.querySelector('.ant-badge, span.ant-badge');
+            if (badge) {
+              // Badge exists - check if it has content or is visible
+              const badgeText = badge.textContent.trim();
+              const badgeStyle = window.getComputedStyle(badge);
+              // Badge with number > 0 or visible dot means changes
+              if (badgeText && badgeText !== '0') return true;
+              // Check for badge-dot (red dot without number)
+              if (badge.querySelector('.ant-badge-dot')) return true;
+              // Check if badge is visible
+              if (badgeStyle.display !== 'none' && badgeStyle.visibility !== 'hidden') return true;
+            }
+          }
+        }
+        return false;
+      });
+
+      log(`IDL changes detected: ${hasIdlChanges}`);
+
+      if (!hasIdlChanges) {
+        await addScreenshot(page, '7_no_idl_changes');
+        throw new Error('idl no update - IDL tab has no changes badge');
+      }
 
       // Click Release button if available
       await page.evaluate(() => {

@@ -39,11 +39,13 @@ function createTaskRoutes(ctx) {
         idl_branch: task.idl_branch,
         idl_version: task.idl_version,
         api_group_id: task.api_group_id,
+        task_name: task.task_name,
         dry_run: task.dry_run,
         status: task.status,
         stage: task.stage,
         result: task.result,
         error: task.error,
+        logs: task.logs,
         startTime: task.startTime,
         endTime: task.endTime,
         subtasks: task.subtasks,
@@ -119,6 +121,7 @@ function createTaskRoutes(ctx) {
           idl_branch: parameters.idl_branch || null,
           idl_version: parameters.idl_version || null,
           api_group_id: parameters.api_group_id || null,
+          task_name: parameters.task_name || null,
           dry_run: parameters.dry_run !== false,
           status: 'running',
           logs: [],
@@ -328,8 +331,16 @@ function createTaskRoutes(ctx) {
     const taskId = req.params.id;
 
     try {
-      const task = tasks.get(taskId);
-      if (!task) return res.status(404).json({ error: 'Task not found' });
+      let task = tasks.get(taskId);
+      let isOrphaned = false;
+
+      // If not in memory, check database for orphaned task
+      if (!task) {
+        task = await getTaskFromDb(taskId);
+        if (!task) return res.status(404).json({ error: 'Task not found' });
+        isOrphaned = true;
+      }
+
       if (task.status !== 'running') return res.status(400).json({ error: 'Task is not running' });
 
       const browserInfo = runningBrowsers.get(taskId);
@@ -358,7 +369,7 @@ function createTaskRoutes(ctx) {
 
           if (subtask && (subtask.status === 'running' || subtask.status === 'pending')) {
             subtask.status = 'stopped';
-            subtask.error = 'Parent task stopped by user';
+            subtask.error = isOrphaned ? 'Orphaned task stopped' : 'Parent task stopped by user';
             subtask.endTime = new Date().toISOString();
           }
 
@@ -371,12 +382,13 @@ function createTaskRoutes(ctx) {
       }
 
       task.status = 'stopped';
-      task.error = 'Task stopped by user';
+      task.error = isOrphaned ? 'Orphaned task stopped' : 'Task stopped by user';
       task.endTime = new Date().toISOString();
-      task.logs.push(`[${new Date().toISOString()}] Task stopped by user`);
+      if (!task.logs) task.logs = [];
+      task.logs.push(`[${new Date().toISOString()}] ${isOrphaned ? 'Orphaned task stopped' : 'Task stopped by user'}`);
       await saveTaskToDb(taskId, task);
 
-      res.json({ success: true, taskId, status: 'stopped' });
+      res.json({ success: true, taskId, status: 'stopped', orphaned: isOrphaned });
     } catch (error) {
       console.error('[API] Stop task error:', error.message);
       res.status(500).json({ error: error.message });
